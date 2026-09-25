@@ -1,0 +1,22 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+artifacts/
+models/
+logs/
+benchmark/results/
+RAG Corpus/
+Training Corpus/
+Scientific papers/
+training set/
+*.sqlite3
+*.chroma/
+wandb/

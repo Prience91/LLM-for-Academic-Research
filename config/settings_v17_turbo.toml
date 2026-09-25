@@ -1,0 +1,424 @@
+[paths]
+pdf_dir = "RAG Corpus"
+training_pdf_dir = "Training Corpus"
+metadata_overrides = "data/metadata_overrides.jsonl"
+metadata_cache = "artifacts/v17_turbo/metadata/cache"
+metadata_review_queue = "artifacts/v17_turbo/metadata/review_required.jsonl"
+heldout_manifest = "artifacts/v17_turbo/splits/heldout_manifest.json"
+artifact_dir = "artifacts/v17_turbo"
+document_registry = "artifacts/v17_turbo/corpus/documents.jsonl"
+chunk_file = "artifacts/v17_turbo/corpus/chunks.jsonl"
+ingestion_report = "artifacts/v17_turbo/corpus/ingestion_report.json"
+corpus_audit_report = "artifacts/v17_turbo/audits/corpus_audit.json"
+chroma_dir = "artifacts/v17_turbo/index/chroma"
+lexical_db = "artifacts/v17_turbo/index/lexical.sqlite3"
+active_index = "artifacts/v17_turbo/index/active_index.json"
+index_binding = "artifacts/v17_turbo/index/index_binding.json"
+sft_dir = "artifacts/v17_turbo/sft_release"
+semantic_audit_queue = "artifacts/v17_turbo/sft_release/semantic_review_census.jsonl"
+sft_exclusions = "artifacts/v17_turbo/sft_release/semantic_exclusions.json"
+training_selection_manifest = "artifacts/v17_turbo/sft_release/training_selection.json"
+training_materialization_report = "artifacts/v17_turbo/sft_release/training_materialization.json"
+benchmark_file = "benchmark/benchmark.jsonl"
+benchmark_reference = "benchmark/benchmark_reference.jsonl"
+benchmark_manifest = "benchmark/benchmark_manifest.json"
+
+[models]
+embedding = "ibm-granite/granite-embedding-30m-english"
+base = "Qwen/Qwen3.8-27B"
+student = "Qwen/Qwen3.8-27B"
+student_source = "Qwen/Qwen3.8-27B"
+adapter_output = "models/qwen3.8-27b-mini-v17-turbo-qlora-nf4"
+merged_output = "models/qwen3.8-27b-mini-v17-turbo-qlora-nf4-merged"
+served = "models/qwen3.8-27b-mini-v17-turbo-qlora-nf4-merged"
+reranker = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+teacher = "qwen3.5-122b-a10b-gptq-int4-teacher"
+teacher_source = "Qwen/Qwen3.5-122B-A10B-GPTQ-Int4"
+
+[smoke_run_ii]
+expected_corpus_documents = 1000
+expected_sft_documents = 900
+heldout_documents = 100
+semantic_audit_maximum = 400
+semantic_audit_fraction = 0.10
+metadata_canary_documents = 10
+pipeline_canary_documents = 1000
+seed = 3407
+
+[metadata]
+enabled = true
+allow_network = true
+crossref_enabled = true
+openalex_enabled = true
+openalex_api_key = ""
+request_timeout_seconds = 20
+maximum_retries = 2
+request_delay_seconds = 0.10
+minimum_title_similarity = 0.93
+minimum_ambiguity_margin = 0.03
+minimum_title_fragment_tokens = 6
+minimum_title_fragment_characters = 40
+user_agent = "GIIS-Metadata-Enrichment/2.0"
+contact_email = ""
+title_page_count = 3
+filename_is_curated_title = false
+
+[ingestion]
+max_chunk_tokens = 512
+chunk_overlap_tokens = 64
+min_chunk_characters = 120
+ocr_fallback_enabled = true
+native_text_minimum_characters = 1000
+native_text_minimum_chunks = 2
+require_verified_metadata = true
+maximum_rejected_document_fraction = 0.10
+
+[corpus_audit]
+minimum_source_title_similarity = 0.80
+
+[teacher]
+base_url = "http://127.0.0.1:8800/v1"
+# The final SFT source is an operator-curated subset of the complete RAG corpus.
+expected_training_documents = 900
+# Request four candidates initially, retain up to four, and refill only papers below three.
+minimum_core_examples_per_document = 3
+maximum_core_examples_per_document = 4
+# Three remains preferred. After the bounded request budget is exhausted, release two
+# fully valid examples with an explicit audit event rather than weakening validation.
+underfilled_release_floor = 2
+# Abort an underfilled paper after two consecutive zero-yield batches instead of spending the
+# maximum request allowance on a persistently failing evidence bundle.
+maximum_zero_yield_requests_before_minimum = 2
+# Request, transport, and structured-output failures are infrastructure failures, not evidence
+# quality failures. Retry them separately and abort cleanly if the bounded retry budget is exhausted.
+maximum_transient_retries_per_request = 2
+transient_retry_backoff_seconds = 1.0
+# Match the selected vLLM profile by overlapping exactly two independent teacher requests.
+# Candidate validation, checkpoint updates, and release ordering remain sequential and stable.
+generation_concurrency = 2
+# Generate four candidates initially and request two-candidate refills only for the remaining gap.
+initial_candidate_batch_size = 4
+refill_candidate_batch_size = 2
+# Candidate allocation is measured against planned core drafts; the runner converts it
+# to an exact partition-level bundle allocation.
+multi_source_fraction = 0.35
+# A timed five-paper smoke run suppresses multi-source extras; normal/full runs retain them.
+timed_smoke_max_documents = 5
+timed_smoke_disable_multi_source = true
+temperature = 0.30
+# Qwen3.8 thinks by default. Synthetic-data generation uses direct instruct mode so
+# the completion budget and wall time are spent on the auditable answer payload.
+enable_thinking = false
+validation_fraction = 0.10
+seed = 3407
+max_input_tokens = 16000
+max_output_tokens = 8000
+request_timeout_seconds = 2400
+# Independent semantic review is final; teacher self-verification remains disabled.
+# The verifier emits verdicts and exact provenance quotes only; it never rewrites an answer.
+verification_batch_size = 2
+verification_max_output_tokens = 3000
+# Semantic self-verification is disabled for dataset builds. Python performs the
+# deterministic first pass; an independent manual audit supplies semantic judgment.
+semantic_verification_enabled = false
+# GPT-OSS can otherwise consume the entire completion allowance in hidden reasoning before it
+# emits the required JSON. Low effort is sufficient for the verifier's narrow entailment task.
+verification_reasoning_effort = "low"
+# Retry malformed/empty verifier output once, then reject only that candidate. A bounded circuit
+# breaker still fails closed if the verifier is broadly unhealthy rather than intermittently noisy.
+maximum_verification_attempts = 2
+maximum_consecutive_verification_quarantines = 3
+# Initial request plus at most two quality refills. Infrastructure retries are separate.
+maximum_core_requests_per_document = 3
+# Build teacher bundles from substantive sections only. Eight chunks provide enough breadth for
+# grounded synthesis while four is the minimum required to generate a paper's allocation.
+evidence_chunks_per_document = 8
+minimum_substantive_chunks_per_document = 4
+# Synthetic candidates teach valid citation behavior without requiring sentence-level exhaustive
+# attribution. Deployment retains its stricter response.minimum_citation_coverage gate.
+minimum_training_citation_coverage = 0.40
+# Reject close paraphrases within the same evidence scope, not merely exact question duplicates.
+maximum_question_similarity = 0.72
+# Granite embeddings catch conceptual paraphrases that lexical overlap misses.
+maximum_question_embedding_similarity = 0.88
+# Long-form examples are opportunistic and assigned from actual answer-token use.
+minimum_long_form_examples_per_document = 0
+maximum_long_form_examples_per_document = 2
+creative_answer_styles_enabled = true
+
+# Small smoke runs are permitted. Larger generation remains hard-locked until every
+# production readiness control below is tested and deliberately enabled.
+[production_readiness]
+production_document_threshold = 2500
+multi_source_checkpoint_resume_verified = false
+minimum_multi_source_yield_gate_verified = false
+answer_mode_distribution_gate_verified = false
+representative_canary_verified = false
+benchmark_frozen_and_passed = false
+production_scale_preflight_verified = false
+cumulative_quarantine_verified = false
+
+[teacher_server]
+host = "127.0.0.1"
+# Must equal the host and port encoded in teacher.base_url; planning fails on divergence.
+port = 8800
+# DGX Spark uses unified CPU/GPU memory. Keep headroom for the OS and model initialization.
+gpu_memory_utilization = 0.78
+# Selected after the full 50-paper A/B: nearly 1.9x baseline throughput outweighed the small,
+# statistically uncertain sampled semantic advantage of 32K/1. This is the operational default;
+# the frozen A/B profiles below remain available for reproducibility.
+max_model_len = 16384
+max_num_seqs = 2
+# Proven Qwen-122B Spark profile: Mamba align blocks exceed vLLM's 2,048-token default.
+max_num_batched_tokens = 8192
+kv_cache_dtype = "fp8"
+enable_prefix_caching = true
+enable_chunked_prefill = true
+enforce_eager = true
+disable_log_requests = true
+generation_config = "vllm"
+quantization = ""
+
+[teacher_ab]
+# This benchmark is isolated from artifacts/sft and never changes the default dataset builder.
+output_dir = "artifacts/benchmarks/teacher_serving_ab"
+# The original eight-request v1 plan remains archived. New planning creates only the approved
+# expanded 2x2 factorial design: infrastructure x multi-source policy.
+design = "two_by_two_factorial_v2"
+factorial_pair_manifest = "benchmark/teacher_ab_factorial_pairs.json"
+single_source_control_requests = 6
+factorial_chunks_per_source = 4
+request_count = 8
+multi_source_fraction = 0.25
+requested_examples = 2
+token_safety_margin = 64
+baseline_max_model_len = 32768
+baseline_max_num_seqs = 1
+candidate_max_model_len = 16384
+candidate_max_num_seqs = 2
+
+[training]
+# V17-Turbo aligns the complete student chat with the expanded teacher-answer capacity.
+# A worst-case one-step QLoRA canary is mandatory before training authorization.
+max_length = 8192
+# -1 means the normal two-epoch run. The canary overrides this to one optimizer step.
+max_steps = -1
+# Zero keeps the complete shuffled training split. A one-step safety canary overrides this to
+# 16, selecting the longest tokenized examples without mutating the immutable release.
+worst_case_canary_examples = 0
+learning_rate = 0.0001
+epochs = 2
+# OOM-safe DGX Spark microbatch. Accumulation preserves an effective batch of 16.
+train_batch_size = 1
+eval_batch_size = 1
+gradient_accumulation_steps = 16
+lora_rank = 32
+lora_alpha = 64
+lora_dropout = 0.05
+seed = 3407
+# The 50-paper run has about 40 optimizer steps, so evaluate and checkpoint in-run.
+eval_steps = 10
+save_steps = 10
+# Validation is used only for eval_loss/model selection. Never retain full-vocabulary
+# token logits across the validation set; that exhausted unified memory in the first
+# guarded Qwen canary even though its training/optimizer step completed successfully.
+prediction_loss_only = true
+# Release unused CUDA allocations after every optimizer step. This prevents the allocator
+# high-water mark from growing across heterogeneous Qwen sequence lengths.
+torch_empty_cache_steps = 1
+# Qwen3.8-27B exceeded the DGX Spark unified-memory ceiling during both BF16-LoRA
+# canaries. Use an NF4-quantized frozen base while keeping BF16 compute and LoRA adapters.
+use_4bit = true
+gradient_checkpointing = true
+# Qwen3.8 supports PyTorch SDPA in this environment; FlashAttention 2 is not installed.
+attention_implementation = "sdpa"
+# Non-reentrant checkpointing avoids the legacy reentrant autograd overhead and is the
+# Transformers-recommended memory-efficient path for contemporary decoder models.
+gradient_checkpointing_use_reentrant = false
+# Train the direct-answer branch used by evidence-grounded deployment. The base weights
+# remain unchanged; serving must also disable thinking for comparable direct answers.
+enable_thinking = false
+hub_model_id = ""
+wandb_enabled = false
+wandb_project = "giis-mini-run"
+wandb_run_name = "mini-run-v17-turbo-qwen3.8-27b-qlora-nf4"
+wandb_tags = "mini-run,v17-turbo,qwen3.8-27b,qlora-nf4,climate-change,direct-answer"
+logging_steps = 1
+
+[retrieval]
+dense_candidates = 30
+lexical_candidates = 30
+rerank_candidates = 20
+final_chunks = 12
+max_chunks_per_document = 3
+rrf_k = 60
+min_dense_similarity = 0.55
+min_reranker_score = 0.0
+minimum_distinct_sources_for_long_form = 2
+enable_source_diversity = true
+source_diversity_penalty = 0.08
+enable_context_deduplication = true
+context_deduplication_similarity = 0.85
+maximum_context_tokens = 6144
+enable_retrieval_cache = true
+retrieval_cache_size = 256
+
+[response]
+standard_max_tokens = 900
+long_form_max_tokens = 2200
+summary_max_tokens = 2500
+# Interactive source summaries use a separate one-pass budget. The longer hierarchical
+# summarizer remains deferred to the production redesign documented in the runbook.
+brief_summary_target_words = 250
+brief_summary_max_tokens = 550
+brief_summary_max_chunks = 8
+minimum_citation_coverage = 0.80
+no_evidence_message = "No corpus evidence."
+validation_failure_message = "The generated response could not be released because it failed grounding validation."
+summary_validation_failure_message = "The generated source summary was incomplete and could not be released."
+
+[serving]
+host = "127.0.0.1"
+vllm_port = 8000
+ui_port = 7860
+gpu_memory_utilization = 0.88
+max_model_len = 16384
+max_num_seqs = 2
+enable_prefix_caching = true
+quantization = ""
+# The merged Qwen artifact intentionally contains only the 851 language-model keys.
+# Prevent vLLM from initializing the unused image processor and vision encoder.
+language_model_only = true
+# Qwen thinking must remain explicitly disabled for evaluation and deployment. The
+# request clients pass this through vLLM as chat_template_kwargs on every model call.
+enable_thinking = false
+request_timeout_seconds = 240
+
+[quality_gates]
+expected_concurrent_users = 7
+p95_ttft_seconds = 5.0
+minimum_single_user_decode_tps = 15.0
+maximum_700_word_latency_seconds = 90.0
+maximum_material_metric_regression = 0.005
+confidence_level = 0.95
+bootstrap_samples = 5000
+bootstrap_seed = 3407
+minimum_paired_cases_per_metric = 30
+
+
+[v17_turbo]
+policy_name = "V17-Turbo"
+version = "17-Turbo"
+contract_revision = 4
+corpus_documents = 1000
+generation_documents = 900
+train_documents = 810
+validation_documents = 90
+frozen_heldout_documents = 100
+semantic_replacements = 0
+core_answer_style = "prose"
+training_release_enabled = false
+heldout_generation_enabled = false
+
+
+[v17_turbo_retrieval_index]
+policy = "v17-turbo"
+maximum_corpus_documents = 20000
+embedding_model = "ibm-granite/granite-embedding-30m-english"
+dense_index = "chroma"
+lexical_index = "sqlite_fts5"
+require_content_addressed_binding = true
+require_registry_hashes = true
+require_immutable_vector_payload_digest = true
+require_runtime_collection_audit = true
+runtime_dependency_on_earlier_policy = false
+
+
+[v17_turbo_heldout_allocation]
+# Integer projection of the planned 3600/1260/101/101 draft mix onto 100 frozen cases.
+case_count = 100
+single_source_cases = 71
+multi_source_cases = 25
+table_cases = 2
+comparison_cases = 2
+require_all_heldout_documents_covered = true
+allocation_basis = "proportional_to_v17_turbo_planned_candidate_mix"
+
+[v17_turbo_heldout_benchmark]
+authoring_model = "Qwen/Qwen3.5-122B-A10B-GPTQ-Int4"
+authoring_method = "qwen_122b_obligation_mapped_from_frozen_heldout_evidence"
+single_source_reviewer = "GPT-OSS-120B"
+multi_source_reviewer = "Codex gold"
+table_reviewer = "Codex gold"
+comparison_reviewer = "Codex gold"
+reference_answers_hidden_from_student = true
+obligation_scoring_required = true
+training_feedback_prohibited = true
+one_shot_final_evaluation = true
+
+[v17_turbo_coverage]
+stable_support_unit_ids = true
+exclude_unmatched_trailing_fragments = true
+materialize_answer_from_units_once = true
+compact_obligation_ledger = true
+require_every_obligation_mapped = true
+require_supporting_evidence_per_answer_unit = true
+preferred_obligations_minimum = 3
+preferred_obligations_maximum = 6
+semantic_entailment_in_python = false
+
+[v17_turbo_capacity]
+classification_unit = "answer_tokens"
+standard_max_tokens = 900
+long_form_min_tokens = 901
+long_form_max_tokens = 2200
+minimum_word_count = 0
+word_target_enabled = false
+word_ceiling_enabled = false
+automatic_mode_assignment = true
+stop_when_obligations_complete = true
+server_context_tokens = 16384
+request_input_tokens = 16000
+teacher_completion_tokens = 8000
+student_context_tokens = 8192
+worst_case_qlora_canary_required = true
+
+[v17_turbo_multi_source]
+fraction_of_planned_core_drafts = 0.35
+candidates_per_bundle = 2
+planned_core_drafts = 3600
+planned_multi_source_drafts = 1260
+planned_multi_source_bundles = 630
+
+[v17_turbo_structured_qualification]
+enabled = true
+source_bundle_fraction = 0.16
+source_bundles = 101
+formats = ["table", "comparison"]
+candidates_per_bundle = 2
+planned_table_candidates = 101
+planned_comparison_candidates = 101
+planned_total_candidates = 202
+selection = "one_python_passing_multi_source_source_per_distinct_bundle_seeded"
+semantic_review_fraction = 1.0
+counts_toward_core_or_multi_source_minimum = false
+semantic_regeneration_enabled = false
+
+[v17_turbo_review]
+review_cap = 400
+single_source_reviewer = "GPT-OSS-120B"
+single_source_machine_review_fraction = 1.0
+single_source_gold_review_fraction = 0.0
+multi_source_gold_review_fraction = 1.0
+structured_table_gold_review_fraction = 1.0
+structured_comparison_gold_review_fraction = 1.0
+machine_accept_disposition = "eligible_for_operator_release"
+machine_reject_disposition = "quarantine"
+machine_error_disposition = "quarantine"
+complete_disposition = "eligible_for_operator_release"
+minor_omission_disposition = "hold"
+materially_incomplete_disposition = "discard"
+unsupported_disposition = "discard"
+semantic_regeneration_enabled = false
+production_corpus_overprovision_fraction = 0.40
+

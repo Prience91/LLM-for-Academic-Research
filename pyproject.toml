@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "giis-academic-research-framework"
+version = "0.1.0"
+description = "Grounded scientific RAG, training, evaluation, and deployment pipeline for GIIS."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "chromadb>=1.0,<2",
+  "datasets>=4,<5",
+  "docling>=2,<3",
+  "gradio>=6,<7",
+  "openai>=2,<3",
+  "peft>=0.17,<1",
+  "pypdf>=6,<7",
+  "sentence-transformers>=5,<6",
+  "torch>=2.7,<3",
+  "transformers>=5,<6",
+  "trl>=0.24,<1",
+  "wandb>=0.21,<1",
+]
+
+[project.optional-dependencies]
+train-4bit = ["bitsandbytes>=0.47,<1"]
+serve = ["vllm>=0.26,<1"]
+test = ["pytest>=8,<10", "ruff>=0.12,<1"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["S101"]
+
