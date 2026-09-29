@@ -175,6 +175,12 @@ The hybrid routing decision is:
 
 The completed Qwen 122B 80-paper experiment established the routing inherited by the 1,000-paper Mini run: GPT-OSS-120B performs the complete single-source census, while every multi-source, table, and comparison candidate receives Codex gold review before training release. The earlier artifacts are evidence for this decision and are not runtime dependencies of the new run.
 
+## Canonical routing amendment adopted 2026-09-29
+
+The benchmark findings above remain the evidence for choosing GPT-OSS-120B as the contamination-first automated reviewer. The earlier hybrid routing decision is now historical. For every newly frozen V17-Turbo plan, GPT-OSS-120B reviews every candidate in every lane first. Candidates judged complete and supported may advance directly. Every OSS non-admission, including exhausted fail-closed review errors, enters a frozen blinded queue for permission-gated gold review. Gold can salvage complete candidates, hold minor omissions for authorized repair and full requalification, or confirm discard.
+
+The operative forward rule is defined in `V17_TURBO_UNIVERSAL_OSS_FIRST_AMENDMENT.md`. The active held-out run retains its earlier content-addressed routing until it closes.
+
 ## Limits and release boundary
 
 The benchmark contains 349 candidates from one Qwen 27B V17 generation run. Model rankings may change with new teacher outputs, response lengths, obligation distributions, or domain mix. GPT-OSS still admitted 22 gold-non-complete candidates among 335 valid outputs; its 6.6% measured contamination is lower, not zero. The gate therefore reduces automated single-source contamination risk but does not establish perfect semantic quality.

@@ -17,8 +17,9 @@ flowchart LR
     G --> H[Grounded answer generation]
     D --> I[V17-Turbo candidate generation]
     I --> J[Deterministic qualification]
-    J --> K[Lane-routed semantic review]
-    K --> L[Immutable SFT release]
+    J --> K[Universal OSS-first semantic review]
+    K --> O[Gold review of OSS non-admissions]
+    O --> L[Immutable SFT release]
     L --> M[Qwen QLoRA training]
     M --> H
     H --> N[Coverage-aware UI]
@@ -41,7 +42,8 @@ flowchart LR
    - Single-source, multi-source, table, and comparison lanes.
    - Evidence-backed obligation ledgers and answer-unit mappings.
    - Capacity lanes that preserve answer completeness without legacy word ceilings.
-   - Deterministic qualification followed by independent, lane-routed semantic review.
+   - Deterministic qualification followed by universal GPT-OSS-120B review across every lane.
+   - Blinded, permission-gated gold review of candidates rejected or failed closed by OSS.
 
 4. **Fine-tuning and evaluation**
    - QLoRA/NF4 fine-tuning for the Qwen student with memory canaries and immutable releases.
@@ -102,6 +104,7 @@ Copy `config/settings.example.toml` before a run and adapt corpus locations, mod
 - [Parsing, metadata, embedding, and hybrid-index policy](guidebook/PARSING_EMBEDDING_AND_HYBRID_INDEX_POLICY.md)
 - [V17-Turbo policy](guidebook/V17_TURBO_POLICY.md)
 - [V17-Turbo execution protocol](guidebook/V17_TURBO_PROTOCOL.md)
+- [V17-Turbo universal OSS-first semantic-routing amendment](guidebook/V17_TURBO_UNIVERSAL_OSS_FIRST_AMENDMENT.md)
 - [Reviewer benchmark and hybrid semantic-review rationale](guidebook/REVIEWER_BENCHMARK_AND_HYBRID_SEMANTIC_REVIEW.md)
 - [UI policy](guidebook/UI_POLICY.md)
 
@@ -110,4 +113,3 @@ The policy documents define the canonical behavior. Configuration and executable
 ## Data and model governance
 
 This repository does not grant redistribution rights for source papers or third-party model weights. Operators are responsible for the licenses and access terms governing their corpora, models, APIs, and generated releases.
-

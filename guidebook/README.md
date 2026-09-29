@@ -21,15 +21,17 @@ This directory is an independent V17-Turbo restart over the 1,000-paper climate-
 - Fresh outputs: `artifacts/v17_turbo/`, `benchmark/`, and `models/` are created by the Mini run only.
 - Shared Hugging Face snapshots may be read from the central cache; model outputs are never inherited from Smoke run II.
 
+> **Canonical routing amendment (2026-09-29):** [V17_TURBO_UNIVERSAL_OSS_FIRST_AMENDMENT.md](V17_TURBO_UNIVERSAL_OSS_FIRST_AMENDMENT.md) supersedes the earlier lane-split semantic-routing rule for newly frozen plans. The active hash-bound held-out run remains governed by its frozen fingerprint until completion.
+
 ## Stage order
 
 1. Verify the overprovisioned `RAG Corpus` against the original and 250-paper expansion manifests, reconcile duplicates and quarantine, then freeze exactly 1,000 verified SHA-256-distinct papers as the canary. Treat an exact twelve-hexadecimal-character plus double-underscore filename prefix as collision metadata during title lookup, preserve the full source filename, and audit every normalization.
 2. Parse with Docling, apply OCR fallback where required, and run cached DOI/title reconciliation through Crossref and OpenAlex. Preserve provider provenance and quarantine unresolved or ambiguous identities without weakening the match threshold.
 3. Freeze a verified release of at least 1,000 SHA-256-distinct documents and require its deterministic audit to pass. Keep unresolved intake outside the release for later adjudication, then build the content-addressed Granite/Chroma and SQLite FTS5 indexes.
 4. Freeze the deterministic 100-paper held-out split, then materialize and hash-verify exactly 900 non-held-out papers into `Training Corpus`. Held-out papers remain in RAG.
-5. Author held-out obligation/reference packets with Qwen 122B; keep references hidden from the student. Route held-out reviews by candidate type.
+5. Author held-out obligation/reference packets with Qwen 122B; keep references hidden from the student. Route every held-out lane through OSS first, then send only OSS non-admissions to permission-gated gold review.
 6. Generate V17-Turbo data with Qwen 122B, using obligation-first evidence assembly, deterministic Python verification, bounded retries, capacity lanes, and resumable per-paper checkpoints.
-7. Route every single-source candidate through GPT-OSS-120B. Route all multi-source, table, and comparison candidates through Codex gold review. Quarantine machine rejects and errors; hold minor omissions; discard material incompleteness and unsupported content.
+7. Under the 2026-09-29 universal OSS-first amendment, route every candidate in every lane through GPT-OSS-120B first. Admit OSS-complete-and-supported candidates directly; freeze every OSS non-admission in a blinded, permission-gated gold-review queue. Gold-complete candidates may be salvaged; hold minor omissions for authorized repair and full requalification; discard material incompleteness and unsupported content.
 8. Materialize only admitted records, bind the actual Qwen 27B student tokenizer, enforce the 8,192-token sample ceiling, and run the worst-case one-step QLoRA memory canary.
 9. Train Qwen 27B in direct-answer mode, select checkpoints using the validation split, merge the adapter, and preserve the 100-paper held-out set for one-shot final evaluation.
 10. Serve the merged model behind the hybrid RAG path and Gradio UI. Retrieval must assemble evidence by obligation and validate coverage before generation.
