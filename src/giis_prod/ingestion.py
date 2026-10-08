@@ -9,7 +9,8 @@ from typing import Any
 
 from .config import Settings
 from .io import read_jsonl, sha256_file, stable_digest, write_json_atomic, write_jsonl_atomic
-from .metadata import EnrichmentResult, MetadataResolver, title_relation
+from .metadata import EnrichmentResult, MetadataQuotaDeferred, MetadataResolver, title_relation
+from .metadata_adjudication import MetadataAdjudicator
 from .models import ChunkRecord, DocumentRecord, MetadataStatus
 
 _YEAR = re.compile(r"\b(19|20)\d{2}\b")
@@ -189,6 +190,7 @@ class CorpusBuilder:
         self.ingestion = settings.section("ingestion")
         self.overrides = _metadata_overrides(settings.path("paths.metadata_overrides"))
         self.metadata_resolver = MetadataResolver(settings)
+        self.metadata_adjudicator = MetadataAdjudicator(settings)
         self._native_converter = None
         self._ocr_converter = None
         self._chunker = None
@@ -199,6 +201,7 @@ class CorpusBuilder:
             return
         from docling.chunking import HybridChunker
         from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
         from docling.datamodel.pipeline_options import PdfPipelineOptions
         from docling.document_converter import DocumentConverter, PdfFormatOption
         from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
@@ -212,14 +215,25 @@ class CorpusBuilder:
             max_tokens=max_tokens,
         )
         self._chunker = HybridChunker(tokenizer=docling_tokenizer, merge_peers=True)
-        native_options = PdfPipelineOptions(do_ocr=False)
+        parser_device = AcceleratorDevice(str(self.ingestion.get("parser_device", "cpu")).lower())
+        native_options = PdfPipelineOptions(
+            do_ocr=False,
+            accelerator_options=AcceleratorOptions(
+                device=parser_device, num_threads=4
+            ),
+        )
         self._native_converter = DocumentConverter(
             format_options={
                 InputFormat.PDF: PdfFormatOption(pipeline_options=native_options)
             }
         )
         if bool(self.ingestion.get("ocr_fallback_enabled", True)):
-            ocr_options = PdfPipelineOptions(do_ocr=True)
+            ocr_options = PdfPipelineOptions(
+                do_ocr=True,
+                accelerator_options=AcceleratorOptions(
+                    device=parser_device, num_threads=4
+                ),
+            )
             self._ocr_converter = DocumentConverter(
                 format_options={
                     InputFormat.PDF: PdfFormatOption(pipeline_options=ocr_options)
@@ -279,9 +293,13 @@ class CorpusBuilder:
         first_pages_text: str,
     ) -> DocumentRecord:
         override = self.overrides.get(file_hash) or self.overrides.get(path.name.lower()) or {}
+        if override.get("verification_method") == "local_model_metadata_adjudication" and override.get("sha256") != file_hash:
+            raise ValueError("Local metadata override does not match this PDF hash")
         _add_z_stroke_warning(warnings, _count_z_stroke(override))
         try:
             enrichment = self.metadata_resolver.enrich(base, first_pages_text, override)
+        except MetadataQuotaDeferred:
+            raise
         except RuntimeError as exc:
             enrichment = EnrichmentResult(
                 values=dict(base),
@@ -291,6 +309,36 @@ class CorpusBuilder:
                 provenance={key: "pdf_native_or_title_page" for key, value in base.items() if value},
                 warnings=[f"metadata_lookup_failure:{type(exc).__name__}"],
             )
+        if not enrichment.verified:
+            clean_stem = _CORPUS_FILENAME_PREFIX.sub("", path.stem, count=1)
+            filename_title = normalize_text(clean_stem)
+            current_title = normalize_text(str(base.get("title") or ""))
+            if filename_title and filename_title.casefold() != current_title.casefold():
+                alternate_base = dict(base)
+                alternate_base["title"] = filename_title
+                try:
+                    alternate = self.metadata_resolver.enrich(
+                        alternate_base, first_pages_text, override
+                    )
+                except MetadataQuotaDeferred:
+                    raise
+                except RuntimeError as exc:
+                    warnings.append(
+                        f"filename_metadata_lookup_failure:{type(exc).__name__}"
+                    )
+                else:
+                    if alternate.verified:
+                        enrichment = alternate
+                        warnings.append("metadata_resolved_from_filename_fallback")
+        # Provider quota exceptions return before this point: they remain provider backlogs.
+        if self.metadata_adjudicator.enabled and (
+            not enrichment.verified or self.metadata_adjudicator.non_english(first_pages_text)
+        ):
+            adjudicated = self.metadata_adjudicator.adjudicate(
+                path, file_hash, base, first_pages_text
+            )
+            if adjudicated is not None:
+                enrichment = adjudicated
         warnings.extend(enrichment.warnings)
         merged = enrichment.values
         authors = merged.get("authors", [])

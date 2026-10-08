@@ -9,9 +9,7 @@ import tempfile
 import urllib.error
 import urllib.request
 
-TARGET = Path(
-    os.getenv("GIIS_OPENALEX_ENV_FILE", Path.home() / ".config" / "giis" / "openalex.env")
-).expanduser()
+TARGET = Path(os.getenv("GIIS_OPENALEX_ENV", str(Path.home() / ".config/giis/openalex.env")))
 VARIABLE = "GIIS__METADATA__OPENALEX_API_KEY"
 ENDPOINT = "https://api.openalex.org/rate-limit"
 

@@ -13,6 +13,7 @@ from .candidate_validation import validate_answer_style
 from .citations import citation_coverage, contains_non_corpus_citation
 from .io import content_version
 from .teacher import EvidenceBundle, TeacherDatasetBuilder
+from .v17_turbo_retry import author_request, TerminalGenerationFailure
 from .v17_turbo_layer import (
     build_support_units, candidate_schema, materialize_candidate,
     render_support_context, validate_structure,
@@ -54,6 +55,29 @@ class V17TurboDatasetBuilder(TeacherDatasetBuilder):
     def __init__(self, settings: Any):
         super().__init__(settings)
         self.client = self.client.with_options(max_retries=0)
+        self._terminal_generation_bundles = set()
+
+    def _audit(self, event: str, **fields: Any) -> None:
+        super()._audit(event, **fields)
+        if event == "generation_response_received" and fields.get("finish_reason") == "length":
+            raise ValueError("Teacher completion was truncated; candidate is not fully generated")
+
+    def _request_examples_with_retries(self, bundle, accepted_questions=None, *, allow_long_form=True,
+                                      requested_examples=2, partition=None, request_number=None):
+        directory=self.settings.path("paths.sft_dir") / "generation_fail_closed"
+        identity={"partition":partition,"bundle_id":bundle.bundle_id,"request_number":request_number}
+        try:
+            return author_request(directory,identity,lambda:self._request_examples(
+                bundle,accepted_questions=accepted_questions,allow_long_form=allow_long_form,
+                requested_examples=requested_examples,partition=partition,request_number=request_number))
+        except TerminalGenerationFailure as exc:
+            # The exhausted request is already hash-bound in the terminal quarantine.
+            # Preserve all fully generated candidates in other bundles and proceed.
+            self._terminal_generation_bundles.add(bundle.bundle_id)
+            self._audit("terminal_authoring_request_quarantined",partition=partition,
+                        request_number=request_number,bundle_id=bundle.bundle_id,
+                        document_ids=list(bundle.document_ids),reason=str(exc))
+            return []
 
     def enable_raw_candidate_journal(self, path: Any) -> None:
         self._v17_turbo_raw_candidate_journal = path

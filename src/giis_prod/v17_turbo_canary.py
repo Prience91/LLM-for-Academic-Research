@@ -154,6 +154,18 @@ def _manifest() -> dict[str, Any]:
         raise ValueError("V17-Turbo canary cannot create a training release")
     _validate_teacher_endpoint(value)
     validate_heldout_benchmark_policy(value["v17_turbo_heldout_benchmark"])
+    review = value["v17_turbo_review"]
+    if review.get("routing_revision") != "split_review_v2" or review.get("gold_selection") != "completed_oss_semantic_rejects" or review.get("all_lane_machine_review_fraction") != 1.0 or review.get("gold_review_requires_explicit_authorization") is not True:
+        raise ValueError("Wrong split-specific main semantic review configuration")
+    if any(review.get(lane + "_reviewer") != "GPT-OSS-120B" for lane in ("single_source", "multi_source", "table", "comparison")):
+        raise ValueError("All training/validation lanes require OSS first")
+    if value["teacher"].get("maximum_transient_retries_per_request") != 1:
+        raise ValueError("Qwen authoring requires exactly one fail-closed retry")
+    if (review.get("maximum_fail_closed_retries") != 1
+            or review.get("gold_fail_closed_retries") != 0
+            or review.get("gold_fail_closed_disposition_requires_authorization") is not True
+            or review.get("exhausted_fail_closed_disposition") != "terminal_quarantine_no_repair"):
+        raise ValueError("Wrong terminal fail-closed retry/disposition configuration")
     _validate_retrieval_index(value)
     return value
 
@@ -175,12 +187,13 @@ def _source_paths() -> list[str]:
         "artifacts/v17_turbo/index/index_binding.json",
         "config/v17_turbo_canary_partitions.json",
         "config/settings_v17_turbo.toml",
-        "V17_TURBO_POLICY.md",
-        "V17_TURBO_PROTOCOL.md",
+        "guidebook/V17_TURBO_POLICY.md",
+        "guidebook/V17_TURBO_PROTOCOL.md",
         "src/giis_prod/teacher.py",
         "src/giis_prod/config.py",
         "src/giis_prod/io.py",
         "src/giis_prod/benchmark_freeze.py",
+        "src/giis_prod/dataset_release.py",
         "src/giis_prod/heldout_authoring.py",
         "src/giis_prod/heldout_oss_review.py",
         "scripts/launch_oss120b_reviewer.sh",
@@ -195,6 +208,17 @@ def _source_paths() -> list[str]:
         "src/giis_prod/v17_turbo_builder.py",
         "src/giis_prod/v17_turbo_canary.py",
         "src/giis_prod/v17_turbo_qualification.py",
+        "src/giis_prod/v17_turbo_review_packets.py",
+        "src/giis_prod/v17_turbo_oss_census.py",
+        "src/giis_prod/v17_turbo_review_routing.py",
+        "src/giis_prod/v17_turbo_retry.py",
+        "src/giis_prod/v17_turbo_semantic_finalize.py",
+        "src/giis_prod/v17_turbo_pre_gold.py",
+        "scripts/run_v17_turbo_main_handoff.sh",
+        "scripts/run_v17_turbo_pre_gold_pipeline.sh",
+        "scripts/run_v17_turbo_heldout_handoff.sh",
+        "scripts/run_v17_turbo_heldout_pipeline_v2.sh",
+        "V17_TURBO_HELDOUT_HANDOFF.md",
     ]
 
 def _source_bindings() -> dict[str, str]:
@@ -407,7 +431,10 @@ def _materialize_results(
         "plan_digest": plan["plan_digest"],
         "completed_at": datetime.now(UTC).isoformat(),
         "documents": sum(len(rows) for rows in plan["partitions"].values()),
-        "core_counts_by_document": dict(sorted(counts.items())),
+        "core_counts_by_document": {document_id: counts.get(document_id, 0)
+                                    for partition in ("train", "validation")
+                                    for document_id in sorted(plan["partitions"][partition])},
+        "terminal_authoring_bundle_count": len(list((out / "work/generation_fail_closed/terminal_failures").glob("*.json"))),
         "accepted_by_kind": dict(sorted(kinds.items())),
         "rejected_by_partition": {
             name: len(rejected_by_partition[name]) for name in ("train", "validation")
@@ -508,7 +535,7 @@ def _checkpoint_core_partition(
         raise RuntimeError(
             f"Core generation completed all schedulable papers, but document {document_id} "
             "exhausted its request attempts. Successful documents were checkpointed and the "
-            "plan can resume only the failed paper or papers."
+            "exhausted failures are terminal quarantine entries and cannot resume or receive repair."
         ) from failure
 
     # Reload all per-paper checkpoints in stable partition order. This performs the

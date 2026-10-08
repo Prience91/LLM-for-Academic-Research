@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
+from .io import read_jsonl
 from .io import sha256_file, write_json_atomic
 
 DATASET_RELEASE_SCHEMA_VERSION = 2
@@ -353,4 +354,20 @@ def validate_dataset_release(
     for required_split in ("train.jsonl", "validation.jsonl"):
         if verified_files[required_split]["row_count"] < 1:
             raise DatasetReleaseError(f"Released required split is empty: {required_split}")
+    if settings.data.get("v17_turbo_review", {}).get("routing_revision") == "split_review_v2":
+        info = manifest.get("semantic_review_manifest") or {}
+        review_path = Path(str(info.get("path") or ""))
+        if not review_path.is_file() or _sha256(review_path, "semantic review manifest") != info.get("sha256"):
+            raise DatasetReleaseError("Release requires a hash-bound all-lane semantic manifest")
+        from .v17_turbo_semantic_finalize import bind_main
+        reviewed = bind_main(review_path.parent)
+        if reviewed.get("plan_digest") != manifest.get("source_plan_digest"):
+            raise DatasetReleaseError("Release semantic plan identity mismatch")
+        eligible = {r["review_id"]: r for r in reviewed["cases"] if r["eligible"]}
+        for split, partition in (("train.jsonl", "train"), ("validation.jsonl", "validation")):
+            for row in read_jsonl(sft_dir / split):
+                rid = row.get("example_id") or row.get("review_id")
+                decision = eligible.get(rid, {})
+                if decision.get("partition") != partition or row.get("candidate_sha256") != decision.get("candidate_sha256") or row.get("admission_path") != decision.get("admission_path"):
+                    raise DatasetReleaseError("Released row lacks split-specific semantic admission provenance")
     return manifest

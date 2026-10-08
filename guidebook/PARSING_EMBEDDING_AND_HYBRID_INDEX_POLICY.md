@@ -1,6 +1,6 @@
 # GIIS parsing, metadata, embedding, and hybrid-index policy
 
-Status: canonical component policy for the Mini-run V17-Turbo pipeline.
+Status: canonical component policy, synchronized 2026-10-08. Full-corpus provider/adjudication routing follows METADATA_INGESTION_POLICY.md; frozen historical Mini-run releases retain their original manifests.
 
 This policy governs the path from raw scientific PDFs to the immutable dense and lexical indexes used by dataset generation, held-out evaluation, and deployed RAG. It is independently executable within the Mini-run workspace. V17-Turbo consumes its frozen outputs but may not weaken its identity, quarantine, audit, or index-binding gates.
 
@@ -20,29 +20,19 @@ Parsing uses Docling with native extraction first and OCR fallback when native t
 
 ## 3. Bibliographic reconciliation
 
-Bibliographic identity must be verified before embedding. The resolver uses this order:
+Use source-bound approved overrides first. Otherwise resolve Crossref DOI, Crossref title, OpenAlex DOI, then OpenAlex title. A complete, well-supported Crossref match is sufficient. OpenAlex is a fallback only for unresolved identity or required metadata. Match thresholds and source-PDF corroboration remain mandatory; a missing DOI alone does not reject a document. Verified titles supersede filenames.
 
-1. source-bound verified override, when one already exists;
-2. DOI extracted from trusted PDF metadata or the title pages, checked against Crossref and OpenAlex;
-3. normalized-title searches against Crossref and OpenAlex;
-4. independent-provider corroboration and document-local title-page evidence; and
-5. Codex adjudication for residual ambiguous or incomplete cases.
+The normal title-similarity threshold is 0.93, ambiguity margin 0.03, and distinctive fragment requires at least six tokens and 40 characters. Provider provenance and responses are cached.
 
-Provider responses are cached and retain provider identity, lookup key, retrieval time, response, match score, provenance, and warnings. The normal title-similarity threshold is 0.93, the ambiguity margin is 0.03, and a verified distinctive fragment requires at least six tokens and 40 characters. Thresholds may not be lowered merely to meet the target count.
+OpenAlex credentials are project-scoped environment secrets. Quota exhaustion and 429 are infrastructure deferrals, not exhausted document lookups. Continue parsing other documents and backlog affected cases; prioritize the oldest backlog after budget reset. Free DOI lookup remains available at a title-search budget floor unless a provider-wide block applies. Never send quota-deferred cases to Qwen as though provider lookup were exhausted.
 
-A verified record requires a title, publication year, and authors or a defensible issuing organization. Once verified, this canonical bibliographic title is authoritative. The source filename is retained as a tentative provenance label and may trigger a non-blocking audit warning, but it cannot replace the verified title or exclude the record. Generic-title matches, conflicting DOI/title combinations, implausible years, incomplete author fields, and ambiguous candidates remain quarantined.
+## 4. Qwen adjudication, authorized gold referrals, and promotion
 
-### OpenAlex authentication and quota handling
+After available provider lookup remains unresolved, English documents use Qwen-122B vision adjudication with opening-page text and one rendered source page. Non-English, unclear, malformed, truncated, or unresolved cases enter a gold queue requiring explicit operator authorization. Local admissions retain local-model provenance; qualification is not a guarantee of metadata correctness.
 
-OpenAlex uses a project-specific key supplied only through `GIIS__METADATA__OPENALEX_API_KEY`. The key must never be committed, written into TOML, placed in manifests, or emitted in logs or artifacts. Cached anonymous results remain reusable after authenticated operation begins.
+Source hashes and required metadata are checked before completed local/provider/gold decisions are promoted into verified overrides and parsing selection. Approved gold rejection persists as manual-human-review-only and cannot be overridden by a model. A corrected null DOI explicitly clears any unverified earlier DOI.
 
-The client reads quota headers and honors `Retry-After`. A 429 response opens a provider circuit breaker for the advertised interval; repeated requests are not issued while the circuit is open. Provider exhaustion is an infrastructure state, not evidence that a paper lacks metadata. Crossref work may continue while OpenAlex is deferred, but unresolved records cannot be treated as corroborated.
-
-## 4. Codex adjudication and verified overrides
-
-Codex is the gold metadata reviewer for cases deterministic reconciliation cannot settle. Each packet must contain the PDF title-page evidence, source filename and SHA-256, extracted DOI, Crossref and OpenAlex candidates, title scores, years, authors or issuing organization, conflicts, and provider provenance.
-
-Codex may issue a source-bound verified override only when the identity is supported by the PDF and authoritative bibliographic evidence. It must not infer missing values from topic similarity or approve the nearest search result. The override binds the source SHA-256 or exact source filename and records title, authors or issuing organization, year, DOI when present, document type, provenance, reviewer, and decision time. Unresolved papers remain quarantined or are replaced.
+[METADATA_INGESTION_POLICY.md](METADATA_INGESTION_POLICY.md) is the operative detailed metadata contract. The implementation is `metadata.py`, `metadata_adjudication.py`, `ingestion.py`, and the full-corpus `production_ingestion.py` runner. Promotion precedes each parsing cycle; gold review does not run automatically.
 
 ## 5. Merge and canonical freeze
 

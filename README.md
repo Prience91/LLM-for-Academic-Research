@@ -17,8 +17,11 @@ flowchart LR
     G --> H[Grounded answer generation]
     D --> I[V17-Turbo candidate generation]
     I --> J[Deterministic qualification]
-    J --> K[Universal OSS-first semantic review]
-    K --> O[Gold review of OSS non-admissions]
+    J --> K[Train and validation: all-lane OSS review]
+    J --> P[Held-out: all-lane gold review]
+    K --> O[Authorized gold review of semantic rejects]
+    K --> L
+    P --> L
     O --> L[Immutable SFT release]
     L --> M[Qwen QLoRA training]
     M --> H
@@ -29,7 +32,9 @@ flowchart LR
 
 1. **Parsing, metadata, embedding, and indexing**
    - Docling native extraction with bounded OCR fallback.
-   - Scholarly identity reconciliation through PDF evidence, Crossref, and OpenAlex.
+   - Source-bound overrides, then Crossref DOI/title lookup and OpenAlex DOI/title fallback.
+   - Budget deferrals stay backlogged while parsing continues; oldest deferred work gets renewed allowance first.
+   - English unresolved metadata goes to Qwen-122B vision adjudication; referrals and non-English sources await authorized gold review.
    - SHA-256-bound document and chunk registries.
    - Granite embeddings in Chroma plus a matching SQLite FTS5 lexical index.
 
@@ -42,8 +47,10 @@ flowchart LR
    - Single-source, multi-source, table, and comparison lanes.
    - Evidence-backed obligation ledgers and answer-unit mappings.
    - Capacity lanes that preserve answer completeness without legacy word ceilings.
-   - Deterministic qualification followed by universal GPT-OSS-120B review across every lane.
-   - Blinded, permission-gated gold review of candidates rejected or failed closed by OSS.
+   - Every training/validation lane receives GPT-OSS-120B review; confident semantic rejects enter blinded, permission-gated gold review.
+   - Every generated held-out reference receives direct gold review across every lane.
+   - Qwen authoring and OSS failed axes get one fail-closed retry; exhausted failures are terminal quarantine, not gold salvaging.
+   - One launch runs main generation, OSS review, and held-out authoring before a joint gold-authorization checkpoint.
 
 4. **Fine-tuning and evaluation**
    - QLoRA/NF4 fine-tuning for the Qwen student with memory canaries and immutable releases.
@@ -97,14 +104,17 @@ python giis_pipeline.py --help
 pytest
 ```
 
+For the current deployment commands and execution-binding refresh procedure, see [the deployment guide](guidebook/DEPLOYMENT_AND_SYNC.md). Linux is required for the DGX orchestration and file-locking paths.
+
 Copy `config/settings.example.toml` before a run and adapt corpus locations, model identifiers, scale controls, and deployment ports. Run-specific selection manifests and frozen release bindings are generated locally and must remain associated with their corresponding corpus and artifacts.
 
 ## Canonical policies
 
 - [Parsing, metadata, embedding, and hybrid-index policy](guidebook/PARSING_EMBEDDING_AND_HYBRID_INDEX_POLICY.md)
+- [Full-corpus metadata adjudication and ingestion policy](guidebook/METADATA_INGESTION_POLICY.md)
 - [V17-Turbo policy](guidebook/V17_TURBO_POLICY.md)
 - [V17-Turbo execution protocol](guidebook/V17_TURBO_PROTOCOL.md)
-- [V17-Turbo universal OSS-first semantic-routing amendment](guidebook/V17_TURBO_UNIVERSAL_OSS_FIRST_AMENDMENT.md)
+- [V17-Turbo split-specific semantic routing and retry contract](guidebook/V17_TURBO_UNIVERSAL_OSS_FIRST_AMENDMENT.md)
 - [Reviewer benchmark and hybrid semantic-review rationale](guidebook/REVIEWER_BENCHMARK_AND_HYBRID_SEMANTIC_REVIEW.md)
 - [UI policy](guidebook/UI_POLICY.md)
 

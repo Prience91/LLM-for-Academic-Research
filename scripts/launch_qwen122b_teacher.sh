@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="${GIIS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
-TEACHER_ENV_FILE="${GIIS_TEACHER_ENV_FILE:-$HOME/.config/giis/teacher.env}"
+GIIS_ROOT="${GIIS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+export GIIS_ROOT
+export PATH="${GIIS_RUNTIME_BIN:-$(dirname "$(command -v python3)")}:$PATH"
 set -a
-source "$TEACHER_ENV_FILE"
+if [[ -f "${GIIS_TEACHER_ENV:-$HOME/.config/giis/mini_teacher.env}" ]]; then source "${GIIS_TEACHER_ENV:-$HOME/.config/giis/mini_teacher.env}"; fi
 set +a
-cd "$ROOT"
-exec env PYTHONPATH=src "$PYTHON_BIN" giis_pipeline.py --config config/settings_v17_turbo.toml teacher-serve
+cd "$GIIS_ROOT"
+exec env PYTHONPATH=src ${GIIS_PYTHON:-python3} giis_pipeline.py --config config/settings_v17_turbo.toml teacher-serve

@@ -137,6 +137,10 @@ class EnrichmentResult:
     warnings: list[str] = field(default_factory=list)
 
 
+class MetadataQuotaDeferred(RuntimeError):
+    """Signal a temporary provider quota without misclassifying the document."""
+
+
 class MetadataResolver:
     """Resolve bibliographic metadata with strict, cached, auditable matching."""
 
@@ -164,6 +168,7 @@ class MetadataResolver:
         self.filename_is_curated_title = bool(
             configuration.get("filename_is_curated_title", False)
         )
+        self.strict_identity_gate = bool(configuration.get("strict_identity_gate", False))
         self.cache_dir = settings.path("paths.metadata_cache")
 
     def _base_provenance(self, values: dict[str, Any]) -> dict[str, str]:
@@ -191,9 +196,24 @@ class MetadataResolver:
             state = json.loads(state_path.read_text(encoding="utf-8"))
             blocked_until = float(state.get("blocked_until_epoch") or 0.0)
             if blocked_until > time.time():
-                if state.get("reason") != "daily_budget_floor" or billable_openalex_search:
+                reason = state.get("reason")
+                if provider == "openalex" and reason in {"daily_budget_floor", "provider_429"}:
+                    # A free DOI lookup may proceed at the budget floor, but a
+                    # provider-wide 429 defers every lookup rather than marking
+                    # the document as an ordinary metadata-review failure.
+                    if reason == "provider_429" or billable_openalex_search:
+                        raise MetadataQuotaDeferred(
+                            f"openalex_{reason}_deferred_until={blocked_until}"
+                        )
+                    if key.startswith("doi:"):
+                        pass
+                    else:
+                        return None
+                else:
                     return None
         if self._provider_blocked_until.get(provider, 0.0) > time.time():
+            if provider == "openalex":
+                raise MetadataQuotaDeferred("openalex_provider_429_in_process")
             return None
 
         headers = {"Accept": "application/json", "User-Agent": self.user_agent}
@@ -224,8 +244,7 @@ class MetadataResolver:
                         "reset_after_seconds": reset_seconds,
                     }
                     if (
-                        billable_openalex_search
-                        and remaining is not None
+                        remaining is not None
                         and remaining <= max(used or 0.0, 10.0)
                     ):
                         blocked_until = time.time() + max(reset_seconds or 60.0, 1.0)
@@ -258,7 +277,7 @@ class MetadataResolver:
                             "http_status": exc.code,
                         },
                     )
-                    return None
+                    raise MetadataQuotaDeferred("openalex_project_key_rejected")
                 if exc.code == 429:
                     try:
                         retry_after = max(float(exc.headers.get("Retry-After", "60")), 1.0)
@@ -279,6 +298,10 @@ class MetadataResolver:
                             ),
                         },
                     )
+                    if provider == "openalex":
+                        raise MetadataQuotaDeferred(
+                            f"openalex_rate_limit_deferred_until={blocked_until}"
+                        )
                     return None
                 if attempt < self.retries:
                     time.sleep(min(2**attempt, 4))
@@ -379,6 +402,90 @@ class MetadataResolver:
                 provenance[key] = source
         return values, provenance
 
+    def _provider_verified_result(
+        self,
+        base: dict[str, Any],
+        first_pages_text: str,
+        source: str,
+        record: dict[str, Any] | None,
+        expected_doi: str | None = None,
+        query_title: str | None = None,
+    ) -> EnrichmentResult | None:
+        """A complete provider match is enough when the PDF supports its identity."""
+        if not record:
+            return None
+        provider_doi = normalize_doi(record.get("doi"))
+        if expected_doi and provider_doi != expected_doi:
+            return None
+        if query_title and title_relation(
+            query_title, record.get("title"), self.threshold,
+            self.minimum_fragment_tokens, self.minimum_fragment_characters,
+        ) == "conflict":
+            return None
+        if not (record.get("title") and record.get("authors") and record.get("year")):
+            return None
+        # The provider title must be visible in the original PDF, not merely
+        # in an embedded title field or filename used as a search hint.
+        page_text = normalized_title(first_pages_text)
+        provider_title = normalized_title(record.get("title"))
+        if not page_text or not provider_title or provider_title not in page_text:
+            return None
+        values, provenance = self._merge(base, record, source)
+        return EnrichmentResult(
+            values=values, verified=True, confidence=0.99,
+            match_source=source, provenance=provenance,
+            warnings=["provider_identity_and_pdf_title_verified"],
+        )
+
+    def _enrich_strict(
+        self, working: dict[str, Any], first_pages_text: str
+    ) -> EnrichmentResult:
+        """Try Crossref to completion before requesting OpenAlex fallback."""
+        title = str(working.get("title") or "").strip()
+        doi = normalize_doi(working.get("doi"))
+        if doi:
+            matched = self._provider_verified_result(
+                working, first_pages_text, "crossref_doi",
+                self._crossref_doi(doi), expected_doi=doi,
+            )
+            if matched:
+                return matched
+        if title:
+            crossref = self._strict_title_match(
+                title, working.get("year"),
+                [("crossref_title", row) for row in self._crossref_title(title)],
+            )
+            if crossref:
+                matched = self._provider_verified_result(
+                    working, first_pages_text, crossref[0], crossref[1],
+                    query_title=title,
+                )
+                if matched:
+                    return matched
+        if doi:
+            matched = self._provider_verified_result(
+                working, first_pages_text, "openalex_doi",
+                self._openalex_doi(doi), expected_doi=doi,
+            )
+            if matched:
+                return matched
+        if title:
+            openalex = self._strict_title_match(
+                title, working.get("year"),
+                [("openalex_title", row) for row in self._openalex_title(title)],
+            )
+            if openalex:
+                matched = self._provider_verified_result(
+                    working, first_pages_text, openalex[0], openalex[1],
+                    query_title=title,
+                )
+                if matched:
+                    return matched
+        return EnrichmentResult(
+            values=working, verified=False, confidence=0.35,
+            match_source="unresolved", provenance=self._base_provenance(working),
+            warnings=["provider_or_pdf_title_review_required"],
+        )
     def enrich(
         self,
         base: dict[str, Any],
@@ -393,8 +500,16 @@ class MetadataResolver:
             working["year"] = _first_year(first_pages_text)
 
         if override:
+            verification_method = str(override.get("verification_method") or "manual_verified_override")
+            if verification_method not in {"manual_verified_override", "openalex_firstpage_doi_title", "crossref_title_pdf_corroborated", "local_model_metadata_adjudication"}:
+                raise ValueError(f"Unknown metadata verification method: {verification_method}")
+            if verification_method == "local_model_metadata_adjudication":
+                if not (override.get("sha256") and override.get("reviewer") and override.get("evidence_manifest_sha256")):
+                    raise ValueError("Local metadata override requires source hash, reviewer and evidence lineage")
+            if override.get("verified") and override.get("clear_unverified_doi"):
+                working["doi"] = None
             for key, value in override.items():
-                if key not in {"sha256", "source_file", "verified"} and value not in (None, ""):
+                if key not in {"sha256", "source_file", "verified", "verification_method", "evidence_manifest_sha256"} and value not in (None, ""):
                     working[key] = value
             if bool(override.get("verified")):
                 if not working.get("authors") and working.get("publisher"):
@@ -405,14 +520,22 @@ class MetadataResolver:
                         "A verified metadata override requires title, year, and either authors "
                         "or an issuing organization in publisher"
                     )
+                if verification_method == "openalex_firstpage_doi_title":
+                    if normalize_doi(first_pages_text) != normalize_doi(working.get("doi")):
+                        raise ValueError("First-page OpenAlex recovery DOI no longer matches PDF")
+                    if normalized_title(working["title"]) not in normalized_title(first_pages_text):
+                        raise ValueError("First-page OpenAlex recovery title no longer appears in PDF")
+                if verification_method == "crossref_title_pdf_corroborated":
+                    if normalized_title(working["title"]) not in normalized_title(first_pages_text):
+                        raise ValueError("Corroborated Crossref title no longer appears in PDF")
                 provenance = {
-                    key: "manual_verified_override" for key, value in working.items() if value
+                    key: verification_method for key, value in working.items() if value
                 }
                 return EnrichmentResult(
                     values=working,
                     verified=True,
-                    confidence=1.0,
-                    match_source="manual_verified_override",
+                    confidence=(0.0 if verification_method == "local_model_metadata_adjudication" else 0.99 if verification_method in {"openalex_firstpage_doi_title", "crossref_title_pdf_corroborated"} else 1.0),
+                    match_source=verification_method,
                     provenance=provenance,
                 )
 
@@ -425,6 +548,9 @@ class MetadataResolver:
                 provenance=self._base_provenance(working),
                 warnings=["metadata_enrichment_disabled"],
             )
+
+        if self.strict_identity_gate:
+            return self._enrich_strict(working, first_pages_text)
 
         title = str(working.get("title") or "").strip()
         resolution_warnings: list[str] = []
@@ -464,10 +590,17 @@ class MetadataResolver:
                     )
 
         if title:
+            # Crossref is the free first-line title resolver. OpenAlex title search is
+            # billable and is consulted only if Crossref cannot verify the work.
             candidates = [
                 ("crossref_title", record) for record in self._crossref_title(title)
-            ] + [("openalex_title", record) for record in self._openalex_title(title)]
+            ]
             matched = self._strict_title_match(title, working.get("year"), candidates)
+            if not matched:
+                candidates = [
+                    ("openalex_title", record) for record in self._openalex_title(title)
+                ]
+                matched = self._strict_title_match(title, working.get("year"), candidates)
             if matched:
                 provider, record, score, relation = matched
                 if relation == "verified_truncation":

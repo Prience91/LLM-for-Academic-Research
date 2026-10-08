@@ -2,25 +2,20 @@
 import concurrent.futures
 import hashlib
 import json
-import os
 import pathlib
 import threading
 import time
 import urllib.request
 from collections import Counter, defaultdict
 
-ROOT = pathlib.Path(
-    os.getenv("GIIS_ROOT", pathlib.Path(__file__).resolve().parents[2])
-).expanduser().resolve()
+ROOT = pathlib.Path('/home/codeaccounting/Documents/Mini run')
 OUT = ROOT / 'artifacts/v17_turbo/heldout_authoring/oss120b_single_source_review'
 PACKETS = ROOT / 'artifacts/v17_turbo/heldout_authoring/review_packets_oss_single_source.jsonl'
 RESULTS = OUT / 'axis_results.jsonl'
 SUMMARY = OUT / 'summary.json'
-MODEL = os.getenv('GIIS_OSS_REVIEWER_MODEL', 'gpt-oss-120b-reviewer')
-URL = os.getenv('GIIS_OSS_REVIEWER_URL', 'http://127.0.0.1:8600/v1/chat/completions')
-KEY_PATH = pathlib.Path(
-    os.getenv("GIIS_OSS_REVIEWER_KEY_FILE", "/tmp/giis_gptoss_reviewer_api_key")
-).expanduser()
+MODEL = 'gpt-oss-120b-reviewer'
+URL = 'http://127.0.0.1:8600/v1/chat/completions'
+KEY_PATH = pathlib.Path('/tmp/giis_gptoss_reviewer_api_key')
 CONCURRENCY = 1
 TIMEOUT_SECONDS = 300
 write_lock = threading.Lock()
@@ -75,7 +70,9 @@ def review_axis(task):
     try:
         key=KEY_PATH.read_text().strip(); req=urllib.request.Request(URL,data=body,headers={'Content-Type':'application/json','Authorization':'Bearer '+key})
         with urllib.request.urlopen(req,timeout=TIMEOUT_SECONDS) as response: raw=json.loads(response.read().decode())
-        choice=raw['choices'][0]; content=choice['message'].get('content') or ''; review=extract_json(content); validate(axis,review,p)
+        choice=raw['choices'][0]
+        if choice.get('finish_reason')=='length': raise ValueError('Reviewer output truncated')
+        content=choice['message'].get('content') or ''; review=extract_json(content); validate(axis,review,p)
         rec.update(status='ok',review=review,raw_content=content,finish_reason=choice.get('finish_reason'),usage=raw.get('usage'),reasoning_present=bool(choice['message'].get('reasoning_content') or choice['message'].get('reasoning')))
     except Exception as exc: rec.update(status='error',error=f'{type(exc).__name__}: {exc}')
     rec['elapsed_seconds']=round(time.time()-started,3)

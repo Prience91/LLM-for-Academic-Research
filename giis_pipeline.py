@@ -32,12 +32,7 @@ def _load_project_openalex_secret() -> None:
     name = "GIIS__METADATA__OPENALEX_API_KEY"
     if os.getenv(name):
         return
-    path = Path(
-        os.getenv(
-            "GIIS_OPENALEX_ENV_FILE",
-            str(Path.home() / ".config" / "giis" / "openalex.env"),
-        )
-    ).expanduser()
+    path = Path(os.getenv("GIIS_OPENALEX_ENV", str(Path.home() / ".config/giis/openalex.env")))
     if not path.is_file():
         return
     if path.stat().st_mode & 0o077:
@@ -324,19 +319,21 @@ def build_parser() -> argparse.ArgumentParser:
     heldout_author.add_argument(
         "--output",
         type=Path,
-        default=Path("artifacts/v17_turbo/heldout_authoring_retry_100"),
+        required=True,
     )
 
     heldout_pipeline = commands.add_parser(
         "heldout-pipeline",
-        help="Run canonical V17-Turbo held-out authoring, Qwen-to-OSS handoff, and routed review",
+        help="Run canonical V17-Turbo held-out authoring and full gold-review queue preparation",
     )
     heldout_pipeline.add_argument(
         "--output",
         type=Path,
-        default=Path("artifacts/v17_turbo/heldout_authoring_retry_100"),
+        required=True,
         help="Fresh held-out namespace below artifacts/v17_turbo",
     )
+
+    heldout_pipeline.add_argument("--main-run", type=Path, required=True, help="OSS-complete main run bound to split_review_v2")
 
     commands.add_parser(
         "materialize-training",
@@ -506,6 +503,7 @@ def main() -> None:
         command = [
             str(settings.root / "scripts/run_v17_turbo_heldout_pipeline_v2.sh"),
             str(output.relative_to(settings.root)),
+            str((settings.root / args.main_run).resolve()),
         ]
         completed = subprocess.run(command, cwd=settings.root, check=False)
         if completed.returncode:

@@ -1,0 +1,89 @@
+[paths]
+pdf_dir = "Full_RAG/Full_Corpus"
+training_pdf_dir = "Full_RAG/Full_Corpus"
+metadata_overrides = "Full_RAG/Parsed_Corpus/metadata/verified_overrides.jsonl"
+metadata_cache = "Full_RAG/Parsed_Corpus/metadata/cache"
+metadata_review_queue = "Full_RAG/Parsed_Corpus/metadata/review_required.jsonl"
+heldout_manifest = "Full_RAG/manifests/unused_heldout_manifest.json"
+artifact_dir = "Full_RAG"
+document_registry = "Full_RAG/Parsed_Corpus/documents.jsonl"
+chunk_file = "Full_RAG/Parsed_Corpus/chunks.jsonl"
+ingestion_report = "Full_RAG/Parsed_Corpus/reports/ingestion_report.json"
+corpus_audit_report = "Full_RAG/Parsed_Corpus/reports/corpus_audit.json"
+chroma_dir = "Full_RAG/Vector_Index/chroma"
+lexical_db = "Full_RAG/Vector_Index/lexical.sqlite3"
+active_index = "Full_RAG/Vector_Index/active_index.json"
+index_binding = "Full_RAG/manifests/full_rag_service_binding.json"
+sft_dir = "Full_RAG/unused_sft"
+semantic_audit_queue = "Full_RAG/unused_semantic.jsonl"
+sft_exclusions = "Full_RAG/unused_exclusions.json"
+training_selection_manifest = "Full_RAG/unused_selection.json"
+training_materialization_report = "Full_RAG/unused_materialization.json"
+benchmark_file = "Full_RAG/unused_benchmark.jsonl"
+benchmark_reference = "Full_RAG/unused_reference.jsonl"
+benchmark_manifest = "Full_RAG/unused_benchmark_manifest.json"
+
+[models]
+embedding = "ibm-granite/granite-embedding-30m-english"
+base = "Qwen/Qwen3.8-27B"
+student = "Qwen/Qwen3.8-27B"
+student_source = ""
+adapter_output = ""
+merged_output = ""
+served = ""
+reranker = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+teacher = ""
+teacher_source = ""
+
+[smoke_run_ii]
+expected_corpus_documents = 1
+expected_sft_documents = 1
+heldout_documents = 0
+semantic_audit_maximum = 0
+semantic_audit_fraction = 0.0
+metadata_canary_documents = 10
+pipeline_canary_documents = 20217
+seed = 3407
+
+[metadata]
+enabled = true
+allow_network = true
+crossref_enabled = true
+openalex_enabled = true
+openalex_api_key = ""
+request_timeout_seconds = 20
+maximum_retries = 2
+request_delay_seconds = 0.10
+minimum_title_similarity = 0.93
+minimum_ambiguity_margin = 0.03
+minimum_title_fragment_tokens = 6
+minimum_title_fragment_characters = 40
+user_agent = "GIIS-Metadata-Enrichment/3.0-Full-RAG"
+contact_email = ""
+title_page_count = 3
+filename_is_curated_title = false
+strict_identity_gate = true
+
+[ingestion]
+parser_device = "cuda"
+max_chunk_tokens = 512
+chunk_overlap_tokens = 64
+min_chunk_characters = 120
+ocr_fallback_enabled = true
+native_text_minimum_characters = 1000
+native_text_minimum_chunks = 2
+require_verified_metadata = true
+maximum_rejected_document_fraction = 0.10
+
+[metadata_adjudication]
+selection_manifest = "Full_RAG/manifests/qualified_selection.jsonl"
+enabled = true
+endpoint = "http://127.0.0.1:8820"
+model = "qwen122b-vision-metadata"
+artifact_dir = "Full_RAG/Parsed_Corpus/metadata/adjudication"
+prompt_file = "config/metadata_adjudication_prompt.txt"
+max_tokens = 1200
+timeout_seconds = 180
+max_source_text_characters = 33000
+# Add your own source-bound provider/model ledgers; historical Spark migration ledgers are not required.
+import_ledgers = ["Full_RAG/Parsed_Corpus/metadata/adjudication/gold_review_ledger.jsonl"]

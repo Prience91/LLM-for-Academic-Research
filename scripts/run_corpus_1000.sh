@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
-ROOT="${GIIS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-PYTHON="${PYTHON_BIN:-python3}"
+ROOT="$GIIS_ROOT"
+PYTHON="${GIIS_PYTHON:-python3}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 LOG_DIR="$ROOT/artifacts/v17_turbo/logs"
 LOG_FILE="$LOG_DIR/corpus_1000_${STAMP}.log"

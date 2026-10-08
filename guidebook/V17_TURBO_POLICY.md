@@ -3,7 +3,7 @@
 
 The raw-corpus-to-index boundary is governed by `PARSING_EMBEDDING_AND_HYBRID_INDEX_POLICY.md`; V17-Turbo consumes only its frozen, validated index binding.
 Status: canonical self-contained synthetic-dataset policy architecture. It governs the complete
-Qwen-122B generation, deterministic qualification, and GPT-OSS-120B single-source semantic-verification
+Qwen-122B generation, deterministic qualification, and split-specific semantic-verification
 workflow. Dataset generation still requires a frozen plan; training release and training remain
 separately authorized operations.
 
@@ -49,10 +49,10 @@ The workflow is:
 6. run deterministic Python verification and bounded refills;
 7. generate paired multi-source prose candidates;
 8. qualify table and comparison variants;
-9. run independent semantic review as the final quality judgment;
-10. quarantine, hold, discard, or mark candidates eligible for a separately authorized release; and
-11. maintain a separately frozen, one-shot held-out benchmark whose references are authored by
-    Qwen-122B and reviewed according to candidate type.
+9. run OSS-120B coverage and support review on every training and validation lane, retrying failed axes once;
+10. freeze completed OSS semantic rejects in a blinded gold queue, then author and deterministically qualify all held-out lanes into a second blinded gold queue;
+11. pause at one hash-bound checkpoint for explicit authorization of both gold reviews; and
+12. after authorized gold dispositions, quarantine, hold, discard, or mark candidates eligible for separately authorized release or benchmark freeze.
 
 Python verifies structure and mechanical grounding. It never establishes scientific entailment or
 semantic completeness. Semantic review is final and does not rewrite or regenerate a candidate.
@@ -156,15 +156,17 @@ one repair at the long-form capacity. A repair that also stops at its ceiling fa
 Held-out authoring and review are part of the V17-Turbo workflow itself. They are executed through the
 canonical `heldout-pipeline` state machine rather than administered as an external follow-up. The state
 machine performs Qwen authoring, inline Python qualification, immutable reviewer-packet construction,
-the guarded Qwen-to-OSS handoff, the full OSS single-source census, Codex-gold routing for every
-multi-source and creative case, disposition binding, and final benchmark freeze. Every stage is
+a complete gold queue for all lanes, the explicit gold-authorization checkpoint, gold review of every
+generated reference, disposition binding, and final benchmark freeze. Every stage is
 checkpointed and resumes only against exact selection, allocation, candidate, packet, configuration,
 implementation, and model identities.
 
 The canonical gate requires all 100 planned references in the exact 71 single-source, 25 multi-source,
 two-table, and two-comparison allocation. An explicitly authorized run-local partial pre-review
-materialization is an exception artifact only. It does not amend this policy, establish a new minimum,
-or satisfy the canonical full-count benchmark gate.
+materialization is an exception artifact only. Terminally exhausted authoring slots are now
+recorded as an explicit shortfall while every fully generated, qualified reference proceeds to the
+gold queue. This preserves review continuity but does not satisfy the canonical 100-case final
+benchmark gate or establish a new minimum.
 
 The 100 held-out papers form a sealed, one-shot final benchmark. They never supply SFT candidates,
 training-time validation candidates, repair evidence, checkpoint-selection evidence, prompt-tuning
@@ -180,13 +182,17 @@ It must not see a student answer while authoring or revising a benchmark case. R
 obligation rubrics remain hidden from the evaluated student; scoring measures obligation satisfaction
 and evidential support rather than similarity to Qwen wording.
 
-Held-out review is routed by candidate type. GPT-OSS-120B performs the complete dual-axis semantic
-review of every single-source case. Codex gold review is mandatory for every multi-source, table, and
-comparison case. Only a `complete` and fully supported case may enter the frozen benchmark. A minor
-omission is held for repair and full requalification; material incompleteness, unsupported content, a
-review error, missing axis, source-boundary violation, or routing mismatch fails closed. Multi-source
-and creative cases may use only held-out documents and may never mix a held-out paper with a training
-or validation-generation paper.
+Held-out review is gold review for every single-source, multi-source, table, and comparison candidate.
+The automatic pipeline prepares a content-addressed full-population gold queue and stops at
+`awaiting_codex_gold_review_authorization`. Gold review requires explicit operator authorization.
+OSS review is not a held-out prerequisite or admission path. Only a deterministically qualified,
+gold-complete, fully supported reference may enter the benchmark. Minor omissions remain held for
+authorized repair and deterministic plus gold requalification; material incompleteness, unsupported
+content, missing review, or routing mismatch fails closed. Multi-source and creative cases use only
+held-out documents. The main all-lane OSS census and its blinded semantic-rejection queue must be
+complete and hash-bound before held-out authoring begins. Main gold decisions are not a prerequisite.
+The automatic single-launch path then freezes the full held-out gold queue and pauses once for
+operator authorization of both queues; it never starts gold assessment automatically.
 
 The frozen benchmark manifest binds document IDs and hashes, questions, candidate types, evidence,
 obligations, references, reviewer identities and verdicts, case order, and all artifact digests. The
@@ -229,10 +235,12 @@ Each of the 900 generation papers receives an initial request for four single-so
 retains at most four and prefers at least three. If fewer than three pass, the engine may issue two
 refill requests of two candidates each, supplying accepted questions as novelty exclusions. After the
 bounded request budget, two fully valid candidates may be released with an explicit underfilled event.
-Fewer than two fails the paper closed.
+Fewer than two from ordinary quality-refill exhaustion fails that paper closed. If an authoring
+request itself exhausts its one retry, that request is terminally quarantined and the paper may
+contribute any already qualified candidates even below the usual floor; other papers continue.
 
 Candidate-quality failure does not receive an individual retry. Transport, timeout, server,
-empty-response, and structured-transport failures receive at most two infrastructure retries and do
+empty-response, truncated completion, and structured-transport failures receive exactly one retry and do
 not consume quality refills. Two consecutive zero-yield requests before the preferred minimum stop
 work on that paper. Successful paper checkpoints remain resumable under the exact same plan digest.
 
@@ -309,38 +317,22 @@ Any amendment requires a new configuration fingerprint and output namespace.
 
 ## Canonical model orchestration and automatic review handoff
 
-Every V17-Turbo execution uses a new output namespace. Core checkpoints, raw journals, materialized
-passing candidates, creative checkpoints, semantic packets, results, and status records are local to
-that namespace. Immutable corpus and model files may be shared; generated candidates and checkpoints
-may not. The materialized passing-candidate directory is an exact view of the current accepted set:
-resume residue is removed before downstream selection. A creative checkpoint is reusable only when
-its plan digest, case ID, format, parent example ID, bundle ID, and document IDs all match.
+Each new execution owns its candidates, checkpoints, reviewer packets, decisions, and manifests under
+its own output namespace. Shared immutable corpus and model files are allowed. Candidate identity,
+source ownership, and plan fingerprints must match before reuse. Frozen historical runs cannot be
+resumed under the new `split_review_v2` routing; use a fresh plan and namespace.
 
-Qwen3.5-122B-A10B-GPTQ-Int4 is the canonical V17-Turbo teacher. It serves only on the reserved
-generation endpoint `127.0.0.1:8800`, with the frozen 16,384-token context and two-sequence profile.
-GPT-OSS-120B is the canonical single-source semantic reviewer. It serves only on the reserved review
-endpoint `127.0.0.1:8600`, with the frozen component-mapped dual-axis protocol. The two model servers
-must never be resident concurrently.
+Qwen-122B serves generation at `127.0.0.1:8800`. For main training and validation, automatic handoff
+freezes packets for every Python-passing single-source, multi-source, table, and comparison candidate,
+stops Qwen, verifies port closure and 100 GiB available memory, starts OSS-120B at
+`127.0.0.1:8600`, and runs both semantic axes for every packet. Servers remain mutually exclusive.
+Only completed OSS semantic rejects enter a blinded content-addressed gold queue. Exhausted OSS execution failures are terminal quarantine entries with no repair or gold salvage.
+The pipeline then stops for explicit gold-review authorization. OSS and gold outcomes are preserved
+separately. Missing packets, foreign identities, incomplete axes, or server uncertainty fail closed.
 
-The automatic handoff is part of the policy:
-
-1. complete and checkpoint all single-source, multi-source, table, and comparison generation;
-2. verify the active plan digest, final passing-file count, 202-case structured-qualification manifest, and provenance
-   of every materialized passing candidate;
-3. freeze blinded review packets for every Python-passing single-source candidate, including packet
-   count and SHA-256 digest;
-4. stop Qwen-122B, require port 8800 to close, and require at least 100 GiB available system memory;
-5. require review port 8600 to be unoccupied, then start GPT-OSS-120B and verify its health;
-6. review every single-source packet on both coverage and support axes, retrying malformed axis output
-   only within the frozen reviewer retry allowance; and
-7. freeze the census summary, per-axis records, dispositions, errors, packet digest, and plan digest,
-   then release the reviewer server.
-
-A port collision, model-profile mismatch, foreign plan digest, candidate-count mismatch, incomplete
-creative manifest, foreign passing file, failed server transition, malformed review, or unresolved
-review error fails closed. It cannot silently reduce the census or admit a candidate. Multi-source,
-table, and comparison candidates remain routed to gold review and are never admitted by the OSS
-single-source census.
+Held-out authoring instead freezes a gold queue containing every generated reference across all lanes,
+releases Qwen, and stops for explicit gold authorization. It does not start OSS. The canonical wrappers
+require an explicit fresh output namespace. Review and finalization verify hashes and authorization.
 
 ## Independent semantic review
 
@@ -365,28 +357,28 @@ regeneration.
 
 ## Reviewer routing and dispositions
 
-Every Python-passing single-source candidate is reviewed by the frozen GPT-OSS-120B component-mapped
-dual-axis protocol. No single-source candidate receives gold review under this policy. GPT-OSS accepts
-become eligible for later operator release consideration; rejects and fail-closed errors enter
-quarantine. The generation programme may overprovision the source corpus by 40% to absorb conservative
-single-source rejection without weakening the gate.
+Training and validation: every Python-passing candidate in all four lanes receives GPT-OSS-120B
+component-mapped dual-axis review first. Complete coverage and supported claims admit through
+`oss_direct_complete`. Only completed OSS semantic rejects (minor omission, material incompleteness, or unsupported content) enter the blinded gold queue. Fail-closed review errors receive one OSS retry; exhausted errors are terminal quarantine entries with no repair or gold salvage. Authorized gold-complete decisions salvage through
+`gold_salvaged_after_oss_non_admission`; minor omissions are held for authorized repair; material
+incompleteness and unsupported content are discarded. Repaired main candidates repeat deterministic,
+OSS, and required gold qualification with a new hash and preserved parent identity.
 
-Every Python-passing multi-source, table, and comparison candidate receives gold semantic review.
-These lanes bypass machine admission because hidden contamination is costlier than visible quarantine
-and their cross-source or structured reasoning is more difficult to gate reliably. Gold `complete`
-results become eligible; `minor_omission` results remain held; `materially_incomplete` and
-`unsupported` results are discarded.
+Held-out: every generated candidate receives authorized gold review. Eligible references require all
+deterministic gates and a gold-complete decision through `gold_direct_complete`. Repaired references
+repeat deterministic and gold qualification. OSS does not determine held-out eligibility.
 
-Eligibility is not a training release. Release requires a separate immutable selected-row manifest,
-policy and source fingerprints, hashes, exclusions, split counts, audit records, and explicit operator
-authorization.
+Gold queues bind the original question, evidence, obligations, answer, candidate hash, lane, and split.
+Machine verdicts remain hidden during gold decisions. Every queued case needs a final disposition;
+unreviewed candidates block completion. An authoring failure without an assessable candidate is recorded
+separately and does not satisfy the full allocation. Semantic rejection never triggers automatic regeneration.
 
-The canonical release uses dataset-release schema version 2. Its manifest binds the immutable train,
-validation, rejected, consolidated, and admission files; the V17-Turbo policy fingerprint; reviewer
-authority; release guards; and a frozen training-selection manifest describing only papers represented
-by admitted examples. Zero-yield generation papers are recorded explicitly and are not counted as
-represented training documents. The SFT, training-selection, and materialization paths must resolve to
-the same release directory. Activating this dataset pathway does not authorize or start training.
+Eligibility is separate from release authorization. Schema-v2 training releases require a hash-bound
+`main_semantic_review_manifest.json`, matching source plan, and per-row candidate hash and admission
+path. Benchmark manifests require a hash-bound `heldout_semantic_review_manifest.json`, complete gold
+census, and exact reference/question identity. No legacy manifest silently satisfies the revised gates.
+The student tokenizer, 8,192-token sample limit, training-selection provenance, and explicit training
+release authorization remain required.
 
 ## Production locks
 
@@ -403,3 +395,41 @@ Before scaling beyond a representative canary, record passing evidence for:
 - cumulative rejection, quarantine, and overprovisioning accounting.
 
 A missing or false gate blocks larger generation. Flags may not be enabled merely to bypass a lock.
+
+## Fail-closed execution contract
+
+Fail-closed execution outcomes are distinct from confident semantic rejects. Qwen-122B retries a failed
+or incomplete authoring request once: at most two total attempts. Only fully generated, deterministic-
+passing candidates reach OSS or gold. The standard quality-refill allocation for papers remains separate;
+it cannot reopen an exhausted authoring failure. SDK retries are disabled. Attempt counters and terminal
+markers persist across resumes. Exhausted Qwen failures are quarantined/archived with no repair or
+subsequent semantic review.
+
+OSS-120B makes one initial coverage/support pass and one retry pass for failed axes only. Successful
+axes are retained. At most two attempts per axis are permitted across resumes. Gold salvage requires
+both axes to have completed successfully with a semantic rejection (`minor_omission`,
+`materially_incomplete`, or `unsupported`). An exhausted OSS fail-closed outcome is terminal quarantine,
+with no repair, gold salvage, or additional retry.
+
+Gold fail-closed outcomes receive no retry. They await explicit operator authorization for quarantine
+or archival; that authorization binds the candidate census and hashes. They remain ineligible and cannot
+be treated as confident scientific rejections or repaired candidates. This rule is distinct from
+explicitly authorized surgical repair of a completed gold `minor_omission` verdict.
+
+## Single-launch pre-gold orchestration
+
+For a fresh frozen main plan and a fresh held-out namespace,
+`scripts/run_v17_turbo_pre_gold_pipeline.sh <main_run> <heldout_run>` owns the normal-path
+server lifecycle and runs main train/validation generation through all lanes, bounded authoring
+retries, deterministic qualification, OSS-120B dual-axis review and its bounded failed-axis retry,
+then held-out Qwen authoring and deterministic qualification in every lane. The main OSS census
+and terminal failure quarantine are validated before held-out authoring. Both blinded gold queues
+are frozen into `joint_gold_authorization_checkpoint.json`; this is the first planned operator pause.
+One explicit authorization statement can be bound to both exact queue hashes with
+`python3 -m giis_prod.v17_turbo_pre_gold authorize`. Neither gold review is executed by the
+launcher. Exhausted per-request Qwen failures and exhausted per-axis OSS errors are terminally quarantined
+without stopping other qualified candidates. Creative qualification uses the surviving paired-paper
+bundles and records any planned-case deficit. Held-out terminal authoring slots likewise leave an
+explicit deficit while surviving references reach the joint gold checkpoint. Unresolved server,
+corpus, plan, or identity failures still stop the run for diagnosis. An underfilled held-out queue
+may receive gold review, but cannot satisfy the canonical 100-case final benchmark gate.

@@ -124,7 +124,7 @@ class V17TurboCapacityTests(unittest.TestCase):
             frozen["authoring_model"],
             "Qwen/Qwen3.5-122B-A10B-GPTQ-Int4",
         )
-        self.assertEqual(heldout_reviewer_for("single_source", policy), "GPT-OSS-120B")
+        self.assertEqual(heldout_reviewer_for("single_source", policy), "Codex gold")
         for candidate_type in ("multi_source", "table", "comparison"):
             self.assertEqual(heldout_reviewer_for(candidate_type, policy), "Codex gold")
         self.assertTrue(frozen["reference_answers_hidden_from_student"])
@@ -148,18 +148,17 @@ class V17TurboCapacityTests(unittest.TestCase):
         candidate["answer_units"][0]["obligation_ids"] = []
         self.assertIn("unmapped_obligation", validate_structure(candidate, units)["reasons"])
 
-    def test_semantic_routing_is_a_census_with_no_single_source_gold_lane(self):
+    def test_main_semantic_routing_is_all_lane_oss_then_rejected_gold(self):
         single = [{"example_id": "s1", "candidate": {"answer_style": "prose"}}]
         multi = [
             {"example_id": "m1", "candidate": {"answer_style": "prose"}},
             {"example_id": "t1", "candidate": {"answer_style": "table"}},
         ]
         plan = semantic_review_plan(single, multi, seed=3407)
-        self.assertEqual([row["example_id"] for row in plan["single_source_machine_census"]], ["s1"])
-        self.assertEqual([row["example_id"] for row in plan["multi_source_gold_census"]], ["m1"])
-        self.assertEqual([row["example_id"] for row in plan["structured_gold_census"]], ["t1"])
-        self.assertEqual(plan["single_source_gold_review_fraction"], 0.0)
-        self.assertEqual(plan["reviewer_ownership"]["single_source_machine_census"], "GPT-OSS-120B")
+        self.assertEqual({row["example_id"] for row in plan["all_lane_machine_census"]}, {"s1", "m1", "t1"})
+        self.assertEqual(plan["gold_selection"], "completed_oss_semantic_rejects")
+        self.assertTrue(plan["gold_review_requires_explicit_authorization"])
+        self.assertEqual(plan["reviewer_ownership"]["all_lane_machine_census"], "GPT-OSS-120B")
 
     def test_turbo_modules_do_not_import_earlier_policy_modules(self):
         files = [
@@ -179,3 +178,51 @@ class V17TurboCapacityTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+class TerminalFailureContinuationTests(unittest.TestCase):
+    def test_exhausted_qwen_request_quarantines_bundle_without_raising(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from giis_prod.v17_turbo_retry import TerminalGenerationFailure
+        builder=object.__new__(V17TurboDatasetBuilder)
+        builder.settings=SimpleNamespace(path=lambda key:Path("/tmp/v17_test_work"))
+        builder._terminal_generation_bundles=set()
+        events=[]
+        builder._audit=lambda event,**fields:events.append((event,fields))
+        bundle=SimpleNamespace(bundle_id="bundle_failed",document_ids=("doc_failed",))
+        with patch("giis_prod.v17_turbo_builder.author_request",side_effect=TerminalGenerationFailure("exhausted")):
+            result=builder._request_examples_with_retries(bundle,partition="train",request_number=1)
+        self.assertEqual(result,[])
+        self.assertEqual(builder._terminal_generation_bundles,{"bundle_failed"})
+        self.assertEqual(events[0][0],"terminal_authoring_request_quarantined")
+
+    def test_creative_qualification_uses_available_bundles_after_shortfall(self):
+        from giis_prod.v17_turbo_contract import qualification_cases
+        source={"dataset_kind":"multi_source_extra","v17_turbo_python_passed":True,
+                "candidate":{"answer_style":"prose"},"document_ids":["d1","d2"],
+                "bundle_id":"b1","example_id":"e1"}
+        with self.assertRaises(ValueError):
+            qualification_cases([source],seed=1,bundle_count=2)
+        cases=qualification_cases([source],seed=1,bundle_count=2,allow_underfilled=True)
+        self.assertEqual({row["answer_style"] for row in cases},{"table","comparison"})
+
+    def test_terminal_underfloor_paper_does_not_abort_other_work(self):
+        from types import SimpleNamespace, MethodType
+        from unittest.mock import patch
+        builder=object.__new__(V17TurboDatasetBuilder)
+        builder.teacher={"seed":1,"minimum_core_examples_per_document":2,
+                         "underfilled_release_floor":2,"maximum_core_examples_per_document":4,
+                         "maximum_core_requests_per_document":3,
+                         "maximum_zero_yield_requests_before_minimum":2,
+                         "initial_candidate_batch_size":4,"refill_candidate_batch_size":2,
+                         "generation_concurrency":1}
+        builder._terminal_generation_bundles=set()
+        builder._audit=lambda *args,**kwargs:None
+        bundle=SimpleNamespace(bundle_id="b1",document_ids=("d1",),chunks=[])
+        def exhausted(self,bundle,*args,**kwargs):
+            self._terminal_generation_bundles.add(bundle.bundle_id)
+            return []
+        builder._request_examples_with_retries=MethodType(exhausted,builder)
+        with patch("giis_prod.teacher.build_bundles",return_value=[bundle]):
+            accepted,rejected=builder._records_for_partition("train",{"d1"},[],checkpoint_digest=None,multi_source_fraction=0)
+        self.assertEqual((accepted,rejected),([],[]))

@@ -2213,6 +2213,17 @@ CANDIDATE PACKETS:
             for document_id, count in underfilled.items()
             if count < underfilled_release_floor
         }
+        terminal_bundles = getattr(self, "_terminal_generation_bundles", set())
+        terminal_underfilled = {
+            document_id: count for document_id, count in below_release_floor.items()
+            if single_bundles[document_id].bundle_id in terminal_bundles
+        }
+        for document_id, count in sorted(terminal_underfilled.items()):
+            self._audit("terminal_authoring_underfilled_document",
+                        partition=name,document_ids=[document_id],
+                        bundle_id=single_bundles[document_id].bundle_id,
+                        accepted_total=count,release_floor=underfilled_release_floor)
+            del below_release_floor[document_id]
         if below_release_floor:
             preview = dict(list(sorted(below_release_floor.items()))[:20])
             raise RuntimeError(

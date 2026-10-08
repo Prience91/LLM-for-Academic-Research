@@ -50,6 +50,24 @@ def validate_benchmark_freeze(settings: Settings) -> dict[str, Any]:
             raise BenchmarkFreezeError("One-time exception cannot establish policy precedent")
         if exception.get("future_v17_turbo_authoring_policy_unchanged") is not True:
             raise BenchmarkFreezeError("One-time exception must preserve future V17-Turbo policy")
+    split_review = bool(turbo_policy and turbo_policy.get("review_routing_revision") == "split_review_v2")
+    gold_cases = {}
+    if split_review and not operator_exception:
+        review_info = manifest.get("gold_review_manifest") or {}
+        review_path = Path(str(review_info.get("path") or ""))
+        if not review_path.is_file() or _sha256_file(review_path) != review_info.get("sha256"):
+            raise BenchmarkFreezeError("Benchmark requires a hash-bound gold census")
+        review_manifest = json.loads(review_path.read_text())
+        if review_manifest.get("status") != "complete" or review_manifest.get("routing_revision") != "split_review_v2" or review_manifest.get("unreviewed_candidates") != 0:
+            raise BenchmarkFreezeError("Benchmark gold review census is incomplete")
+        from .v17_turbo_review_routing import bind_gold
+        queue = review_path.parent / "codex_gold_review_all_lanes"
+        bound = bind_gold(queue)
+        if _sha256_file(queue / "disposition_manifest.json") != review_manifest.get("gold_disposition_manifest_sha256"):
+            raise BenchmarkFreezeError("Benchmark gold disposition binding drift")
+        gold_cases = {r["review_id"]: r for r in review_manifest["cases"]}
+        if len(gold_cases) != review_manifest["population"]:
+            raise BenchmarkFreezeError("Benchmark gold census duplicate or missing IDs")
     qwen_authored = False
     if turbo_policy and not operator_exception:
         qwen_authored = True
@@ -94,6 +112,8 @@ def validate_benchmark_freeze(settings: Settings) -> dict[str, Any]:
         raise BenchmarkFreezeError("Benchmark freeze is bound to the wrong held-out selection")
     if set(map(str, manifest.get("heldout_document_ids", []))) != heldout_ids:
         raise BenchmarkFreezeError("Benchmark manifest held-out IDs do not match the frozen split")
+    if split_review and not operator_exception and review_manifest.get("selection_digest") != heldout.get("selection_digest"):
+        raise BenchmarkFreezeError("Gold census targets a foreign held-out selection")
     exception_authorized: set[str] = set()
     exception_legacy: set[str] = set()
     if operator_exception:
@@ -199,6 +219,16 @@ def validate_benchmark_freeze(settings: Settings) -> dict[str, Any]:
                 raise BenchmarkFreezeError(f"Held-out reviewer routing mismatch: {case_id}")
             if str(rubric.get("review_verdict")) != "complete":
                 raise BenchmarkFreezeError(f"Held-out case is not semantically complete: {case_id}")
+            if split_review:
+                decision = gold_cases.get(case_id, {})
+                if decision.get("verdict") != "complete" or decision.get("admission_path") != "gold_direct_complete" or decision.get("lane") != candidate_type:
+                    raise BenchmarkFreezeError(f"Held-out case lacks gold complete provenance: {case_id}")
+                if rubric.get("candidate_sha256") != decision.get("candidate_sha256"):
+                    raise BenchmarkFreezeError(f"Held-out reference candidate hash mismatch: {case_id}")
+                packets = {p["review_id"]:p for p in read_jsonl(queue / "review_packets_blinded.jsonl")}
+                packet = packets.get(case_id, {})
+                if rubric.get("reference_answer") != packet.get("answer") or case.get("query") != packet.get("question"):
+                    raise BenchmarkFreezeError(f"Frozen reference differs from gold-reviewed content: {case_id}")
             if not str(rubric.get("reference_answer") or "").strip():
                 raise BenchmarkFreezeError(f"Held-out reference answer is absent: {case_id}")
             if not rubric.get("coverage_obligations"):

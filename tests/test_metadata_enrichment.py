@@ -11,6 +11,7 @@ from giis_prod.config import Settings
 from giis_prod.ingestion import _native_text_is_adequate, _raw_pdf_year, _select_title
 from giis_prod.metadata import (
     MetadataResolver,
+    MetadataQuotaDeferred,
     normalize_doi,
     title_relation,
     title_similarity,
@@ -46,7 +47,7 @@ class MetadataEnrichmentTests(unittest.TestCase):
     def test_curated_filename_supersedes_generic_embedded_title(self):
         title, warnings = _select_title(
             "A Global Safety Net to reverse biodiversity loss",
-            "Science Journals — AAAS",
+            "Science Journals â€” AAAS",
             True,
         )
         self.assertEqual(title, "A Global Safety Net to reverse biodiversity loss")
@@ -225,8 +226,10 @@ class MetadataEnrichmentTests(unittest.TestCase):
             headers = Message(); headers["Retry-After"] = "3600"
             error = urllib.error.HTTPError("https://example.test", 429, "limited", headers, None)
             with patch("urllib.request.urlopen", side_effect=error) as request:
-                self.assertIsNone(resolver._cached_json("openalex", "one", "https://example.test/one"))
-                self.assertIsNone(resolver._cached_json("openalex", "two", "https://example.test/two"))
+                with self.assertRaises(MetadataQuotaDeferred):
+                    resolver._cached_json("openalex", "one", "https://example.test/one")
+                with self.assertRaises(MetadataQuotaDeferred):
+                    resolver._cached_json("openalex", "two", "https://example.test/two")
         self.assertEqual(request.call_count, 1)
 
     def test_persisted_daily_budget_floor_blocks_only_billable_openalex_search(self):
@@ -241,11 +244,10 @@ class MetadataEnrichmentTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with patch("urllib.request.urlopen", side_effect=OSError("offline")) as request:
-                self.assertIsNone(
+                with self.assertRaises(MetadataQuotaDeferred):
                     resolver._cached_json(
                         "openalex", "title:climate", "https://example.test/search"
                     )
-                )
                 self.assertIsNone(
                     resolver._cached_json(
                         "openalex", "doi:10.1/test", "https://example.test/work"
@@ -263,11 +265,10 @@ class MetadataEnrichmentTests(unittest.TestCase):
                 "https://example.test", 401, "unauthorized", Message(), None
             )
             with patch("urllib.request.urlopen", side_effect=error):
-                self.assertIsNone(
+                with self.assertRaises(MetadataQuotaDeferred):
                     resolver._cached_json(
                         "openalex", "title:climate", "https://example.test/search"
                     )
-                )
             state = (
                 Path(temporary)
                 / "artifacts/metadata/cache/openalex/rate_limit_state.json"

@@ -20,3 +20,7 @@ training set/
 *.sqlite3
 *.chroma/
 wandb/
+
+# Full-corpus deployment artifacts
+Full_RAG/
+*.tar.gz

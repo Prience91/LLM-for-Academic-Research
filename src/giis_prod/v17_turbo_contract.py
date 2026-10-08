@@ -1,4 +1,4 @@
-"""Frozen arithmetic and review-sampling rules for the V17-Turbo canary."""
+"""Frozen arithmetic and split-specific review rules for V17-Turbo."""
 from __future__ import annotations
 
 from collections import defaultdict, deque
@@ -87,7 +87,7 @@ def validate_retrieval_index_policy(
 HELDOUT_REFERENCE_GENERATOR = "Qwen/Qwen3.5-122B-A10B-GPTQ-Int4"
 HELDOUT_AUTHORING_METHOD = "qwen_122b_obligation_mapped_from_frozen_heldout_evidence"
 HELDOUT_REVIEWER_ROUTING = {
-    "single_source": "GPT-OSS-120B",
+    "single_source": "Codex gold",
     "multi_source": "Codex gold",
     "table": "Codex gold",
     "comparison": "Codex gold",
@@ -97,6 +97,9 @@ HELDOUT_REVIEWER_ROUTING = {
 def validate_heldout_benchmark_policy(configuration: dict[str, Any]) -> dict[str, Any]:
     """Validate the locked final-benchmark author and lane-specific reviewer ownership."""
     expected = {
+        "review_routing_revision": "split_review_v2",
+        "maximum_authoring_fail_closed_retries": 1,
+        "gold_review_requires_explicit_authorization": True,
         "authoring_model": HELDOUT_REFERENCE_GENERATOR,
         "authoring_method": HELDOUT_AUTHORING_METHOD,
         "single_source_reviewer": HELDOUT_REVIEWER_ROUTING["single_source"],
@@ -190,8 +193,9 @@ def qualification_source_selection(
     *,
     seed: int,
     bundle_count: int = QUALIFICATION_BUNDLES,
+    allow_underfilled: bool = False,
 ) -> list[dict[str, Any]]:
-    """Choose one Python-passing prose source from each of distinct multi-source bundles."""
+    """Choose one Python-passing prose source from each distinct multi-source bundle."""
     if bundle_count < 1:
         raise ValueError("Qualification bundle count must be positive")
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -205,7 +209,7 @@ def qualification_source_selection(
         ):
             grouped[str(row.get("bundle_id") or "")].append(row)
     grouped.pop("", None)
-    if len(grouped) < bundle_count:
+    if len(grouped) < bundle_count and not allow_underfilled:
         raise ValueError(
             f"Qualification requires {bundle_count} distinct passing multi-source bundles; "
             f"found {len(grouped)}"
@@ -223,11 +227,13 @@ def qualification_source_selection(
 def qualification_cases(
     candidates: Iterable[dict[str, Any]], *, seed: int,
     bundle_count: int = QUALIFICATION_BUNDLES,
+    allow_underfilled: bool = False,
 ) -> list[dict[str, Any]]:
-    """Expand the configured source-bundle sample into paired rendering cases."""
+    """Expand available qualified bundles into paired rendering cases."""
     cases: list[dict[str, Any]] = []
     for source in qualification_source_selection(
-        candidates, seed=seed, bundle_count=bundle_count
+        candidates, seed=seed, bundle_count=bundle_count,
+        allow_underfilled=allow_underfilled
     ):
         for style in QUALIFICATION_STYLES:
             cases.append(
@@ -340,19 +346,8 @@ def semantic_review_plan(
         row for row in multi_source if str(row.get("example_id")) not in structured_ids
     ]
     return {
-        "single_source_machine_census": sorted(
-            single_prose, key=lambda row: _stable_order(row, seed)
-        ),
-        "multi_source_gold_census": sorted(
-            multi_prose, key=lambda row: _stable_order(row, seed + 1)
-        ),
-        "structured_gold_census": sorted(
-            structured, key=lambda row: _stable_order(row, seed + 2)
-        ),
-        "reviewer_ownership": {
-            "single_source_machine_census": "GPT-OSS-120B",
-            "multi_source_gold_census": "gold",
-            "structured_gold_census": "gold",
-        },
-        "single_source_gold_review_fraction": 0.0,
+        "all_lane_machine_census": sorted(all_rows, key=lambda row: _stable_order(row, seed)),
+        "reviewer_ownership": {"all_lane_machine_census": "GPT-OSS-120B"},
+        "gold_selection": "completed_oss_semantic_rejects",
+        "gold_review_requires_explicit_authorization": True,
     }

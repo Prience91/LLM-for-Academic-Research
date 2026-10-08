@@ -90,10 +90,11 @@ def run_v17_turbo_qualification(
         passing_rows,
         seed=int(settings.get("teacher.seed")),
         bundle_count=int(configuration["source_bundles"]),
+        allow_underfilled=True,
     )
     expected = int(configuration["planned_total_candidates"])
-    if len(cases) != expected:
-        raise RuntimeError(f"Expected {expected} qualification cases; found {len(cases)}")
+    if len(cases) > expected or len(cases) % 2:
+        raise RuntimeError(f"Invalid qualification allocation: planned {expected}, found {len(cases)}")
 
     profile = running_teacher_profile(settings)
     expected_profile = {"max_model_len": 16384, "max_num_seqs": 2}
@@ -111,6 +112,7 @@ def run_v17_turbo_qualification(
         api_key=api_key,
         base_url=str(settings.get("teacher.base_url")),
         timeout=float(settings.get("teacher.request_timeout_seconds")),
+        max_retries=0,
     )
     retries = int(settings.get("teacher.maximum_transient_retries_per_request"))
     minimum_coverage = float(settings.get("teacher.minimum_training_citation_coverage"))
@@ -151,9 +153,18 @@ def run_v17_turbo_qualification(
                 "training_eligible": False,
             }
         )
-        for attempt in range(1, retries + 2):
+        attempt_path = output_dir / "fail_closed_attempts" / (str(case["case_id"]) + ".json")
+        prior = json.loads(attempt_path.read_text()) if attempt_path.exists() else {}
+        spent = int(prior.get("attempts", 0))
+        if spent >= 2:
+            result.update(error="Creative authoring retry budget exhausted",attempts=2,terminal_fail_closed=True,retry_allowed=False,repair_allowed=False,
+                          deterministic_review={"passed":False,"issues":["generation_or_parse_failure"],"semantic_status":"not_queued"})
+        for attempt in range(spent + 1, 3):
+            write_json_atomic(attempt_path, {"case_id":case["case_id"],"attempts":attempt,"maximum_attempts":2})
             try:
                 response = client.chat.completions.create(**options)
+                if getattr(response.choices[0], "finish_reason", None) == "length":
+                    raise ValueError("Teacher output was truncated")
                 content = response.choices[0].message.content
                 if not content:
                     raise ValueError("Teacher returned empty structured output")
@@ -178,9 +189,12 @@ def run_v17_turbo_qualification(
                 result["attempts"] = attempt
                 break
             except Exception as exc:
-                if attempt > retries:
+                if attempt >= 2:
                     result["error"] = f"{type(exc).__name__}: {exc}"
                     result["attempts"] = attempt
+                    result["terminal_fail_closed"] = True
+                    result["retry_allowed"] = False
+                    result["repair_allowed"] = False
                     result["deterministic_review"] = {
                         "passed": False,
                         "issues": ["generation_or_parse_failure"],
@@ -188,6 +202,8 @@ def run_v17_turbo_qualification(
                     }
                 else:
                     time.sleep(float(settings.get("teacher.transient_retry_backoff_seconds")))
+        if result.get("terminal_fail_closed"):
+            write_json_atomic(output_dir / "quarantine/terminal_authoring_failures" / (str(case["case_id"]) + ".json"), result)
         result["elapsed_seconds"] = round(time.perf_counter() - started, 3)
         write_json_atomic(checkpoint, result)
         return result
@@ -217,6 +233,8 @@ def run_v17_turbo_qualification(
         "purpose": "V17-Turbo paired table/comparison qualification lane",
         "source_bundle_count": len({row["bundle_id"] for row in results}),
         "case_count": len(results),
+        "planned_case_count": expected,
+        "source_bundle_deficit": int(configuration["source_bundles"]) - len({row["bundle_id"] for row in results}),
         "cases_by_style": by_style,
         "deterministic_passed": len(semantic_queue),
         "deterministic_failed": len(results) - len(semantic_queue),

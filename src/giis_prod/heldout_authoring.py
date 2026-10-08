@@ -175,12 +175,21 @@ def _rows(case: dict[str, Any],bundle: EvidenceBundle,candidate: dict[str, Any],
         obligations.append({'obligation_id':str(obligation['obligation_id']),'requirement':str(obligation['requirement']),'supporting_chunk_ids':sorted(set(chunk_ids))})
     case_row={'case_id':case['case_id'],'query':candidate['question'],'category':'heldout_scientific_evidence','candidate_type':case['candidate_type'],'expected_document_ids':case['document_ids'],'expect_abstention':False,'requested_mode':candidate['response_mode'],'question_authoring_model':settings.get('v17_turbo_heldout_benchmark.authoring_model')}
     reviewer=(settings.get('v17_turbo_heldout_benchmark.single_source_reviewer') if case['candidate_type']=='single_source' else settings.get(f"v17_turbo_heldout_benchmark.{case['candidate_type']}_reviewer"))
-    reference={'case_id':case['case_id'],'candidate_type':case['candidate_type'],'expected_document_ids':case['document_ids'],'supporting_chunk_ids':[str(bundle.chunks[i-1]['chunk_id']) for i in sorted(used)],'required_points':[x['requirement'] for x in obligations],'semantic_guardrails':['Use only the frozen supporting evidence.','Preserve source ownership, scope, method, timeframe, uncertainty, and causal boundaries.','Satisfy every atomic obligation without unsupported claims.'],'coverage_obligations':obligations,'reference_answer':candidate['answer'],'reference_answer_supplied_to_model':False,'reviewer':reviewer,'review_verdict':'pending','authoring_model':settings.get('v17_turbo_heldout_benchmark.authoring_model')}
+    reference={'candidate_sha256':_digest(candidate),'case_id':case['case_id'],'candidate_type':case['candidate_type'],'expected_document_ids':case['document_ids'],'supporting_chunk_ids':[str(bundle.chunks[i-1]['chunk_id']) for i in sorted(used)],'required_points':[x['requirement'] for x in obligations],'semantic_guardrails':['Use only the frozen supporting evidence.','Preserve source ownership, scope, method, timeframe, uncertainty, and causal boundaries.','Satisfy every atomic obligation without unsupported claims.'],'coverage_obligations':obligations,'reference_answer':candidate['answer'],'reference_answer_supplied_to_model':False,'reviewer':reviewer,'review_verdict':'pending','authoring_model':settings.get('v17_turbo_heldout_benchmark.authoring_model')}
     packet={'review_id':case['case_id'],'candidate_sha256':_digest(candidate),'lane':case['candidate_type'],'question':candidate['question'],'evidence':render_support_context(bundle.chunks,build_support_units(bundle.chunks)),'answer':candidate['answer'],'teacher_declared_obligations':candidate['coverage_obligations'],'expected_document_ids':case['document_ids'],'assigned_reviewer':reviewer}
     return case_row,reference,packet
 
 
 def author_heldout(settings: Settings,output_dir: Path) -> dict[str,Any]:
+    from giis_prod.v17_turbo_review_routing import REVISION
+    from giis_prod.v17_turbo_contract import validate_heldout_benchmark_policy
+    validate_heldout_benchmark_policy(settings.section('v17_turbo_heldout_benchmark'))
+    policy_fingerprint=_digest({'configuration':settings.data,'sources':{rel:hashlib.sha256((settings.root/rel).read_bytes()).hexdigest() for rel in ['guidebook/V17_TURBO_POLICY.md','guidebook/V17_TURBO_PROTOCOL.md','src/giis_prod/heldout_authoring.py','src/giis_prod/v17_turbo_review_routing.py','src/giis_prod/v17_turbo_semantic_finalize.py']}})
+    prior_path=output_dir/'status.json'
+    if prior_path.exists():
+        prior=json.loads(prior_path.read_text())
+        if prior.get('review_routing_revision')!=REVISION or prior.get('review_policy_fingerprint')!=policy_fingerprint:
+            raise ValueError('Historical or changed held-out fingerprint; use a fresh namespace')
     output_dir.mkdir(parents=True,exist_ok=True); checkpoints=output_dir/'checkpoints'; checkpoints.mkdir(exist_ok=True)
     heldout=json.loads(settings.path('paths.heldout_manifest').read_text()); ids=[str(x) for x in heldout['heldout_document_ids']]
     cases=heldout_case_allocation(ids,settings); allocation_digest=_digest(cases)
@@ -212,12 +221,19 @@ def author_heldout(settings: Settings,output_dir: Path) -> dict[str,Any]:
         if payload.get('review_packet',{}).get('candidate_sha256')!=_digest(payload.get('candidate')):
             raise ValueError(f'Checkpoint candidate digest mismatch: {checkpoint_path}')
         existing_results.append(payload)
-    progress={'status':'running','started_at':started,'total':len(cases),'completed':len(existing_results),'failed':0,'selection_digest':heldout['selection_digest'],'allocation_digest':allocation_digest,'resumed_at':datetime.now(UTC).isoformat()}
+    progress={'review_routing_revision':REVISION,'review_policy_fingerprint':policy_fingerprint,'status':'running','started_at':started,'total':len(cases),'completed':len(existing_results),'failed':0,'selection_digest':heldout['selection_digest'],'allocation_digest':allocation_digest,'resumed_at':datetime.now(UTC).isoformat()}
     write_json_atomic(status_path,progress)
     builder=V17TurboDatasetBuilder(settings)
     def one(case: dict[str,Any])->dict[str,Any]:
-        bundle=_bundle(case,chunks,int(settings.get('teacher.evidence_chunks_per_document'))); failures=[]
-        for attempt in range(1,int(settings.get('teacher.maximum_core_requests_per_document'))+1):
+        bundle=_bundle(case,chunks,int(settings.get('teacher.evidence_chunks_per_document')))
+        attempt_path=output_dir/'authoring_fail_closed_attempts'/f"{case['case_id']}.json"
+        terminal_path=output_dir/'quarantine/terminal_authoring_failures'/f"{case['case_id']}.json"
+        if terminal_path.exists(): raise RuntimeError('Held-out authoring failure is terminal; no retry or repair')
+        failures=json.loads(attempt_path.read_text()).get('attempts',[]) if attempt_path.exists() else []
+        spent=max([int(x['attempt']) for x in failures] or [0])
+        for attempt in range(spent+1,3):
+            failures.append({'attempt':attempt,'reason':'in_progress_or_interrupted'})
+            write_json_atomic(attempt_path,{'case_id':case['case_id'],'attempts':failures,'maximum_attempts':2})
             try:
                 proven_table_review=None
                 if case['candidate_type'] in {'single_source','multi_source'}:
@@ -232,6 +248,7 @@ def author_heldout(settings: Settings,output_dir: Path) -> dict[str,Any]:
                         continue
                     options,evidence=_table_request_options(settings,bundle,source)
                     response=builder.client.chat.completions.create(**options)
+                    if getattr(response.choices[0],'finish_reason',None)=='length': raise ValueError('Teacher output was truncated')
                     content=response.choices[0].message.content
                     if not content:raise ValueError('Teacher returned empty creative table output')
                     rendered=list(json.loads(content).get('examples') or [])
@@ -251,6 +268,7 @@ def author_heldout(settings: Settings,output_dir: Path) -> dict[str,Any]:
                     examples=[table]
                 else:
                     response=builder.client.chat.completions.create(**_structured_options(settings,bundle,case['candidate_type']))
+                    if getattr(response.choices[0],'finish_reason',None)=='length': raise ValueError('Teacher output was truncated')
                     content=response.choices[0].message.content
                     if not content:raise ValueError('Teacher returned empty structured output')
                     examples=list(json.loads(content).get('examples') or [])
@@ -266,10 +284,19 @@ def author_heldout(settings: Settings,output_dir: Path) -> dict[str,Any]:
                 payload={'case_spec':case,'allocation_digest':allocation_digest,'bundle':{'bundle_id':bundle.bundle_id,'chunk_ids':[x['chunk_id'] for x in bundle.chunks]},'candidate':examples[0],'case':case_row,'reference':reference,'review_packet':packet,'attempt':attempt,'failures':failures}
                 write_json_atomic(checkpoints/f"{case['case_id']}.json",payload);return payload
             except Exception as exc:failures.append({'attempt':attempt,'reason':f'{type(exc).__name__}: {exc}'})
+        write_json_atomic(terminal_path,{'case_id':case['case_id'],'attempts':failures,'status':'terminal_quarantine','retry_allowed':False,'repair_allowed':False,'semantic_review_allowed':False})
         raise RuntimeError(f"Held-out authoring exhausted for {case['case_id']}: {failures[-1] if failures else 'unknown'}")
-    results=list(existing_results);errors=[]
+    results=list(existing_results)
     completed_case_ids={str(payload['case_spec']['case_id']) for payload in existing_results}
-    pending_cases=[case for case in cases if str(case['case_id']) not in completed_case_ids]
+    terminal_dir=output_dir/'quarantine/terminal_authoring_failures'
+    terminal_by_id={path.stem:json.loads(path.read_text()) for path in sorted(terminal_dir.glob('*.json'))}
+    if (set(terminal_by_id)-set(case_by_id) or set(terminal_by_id)&completed_case_ids
+            or any(value.get('status')!='terminal_quarantine' or value.get('retry_allowed') is not False
+                   or value.get('repair_allowed') is not False or value.get('case_id')!=case_id
+                   for case_id,value in terminal_by_id.items())):
+        raise ValueError('Held-out terminal authoring census contains foreign or nonterminal cases')
+    errors=[{'case_id':case_id,'error':'terminal_authoring_quarantine'} for case_id in sorted(terminal_by_id)]
+    pending_cases=[case for case in cases if str(case['case_id']) not in completed_case_ids|set(terminal_by_id)]
     with ThreadPoolExecutor(max_workers=int(settings.get('teacher.generation_concurrency'))) as pool:
         futures={pool.submit(one,case):case for case in pending_cases}
         for future in as_completed(futures):
@@ -278,12 +305,20 @@ def author_heldout(settings: Settings,output_dir: Path) -> dict[str,Any]:
             except Exception as exc:errors.append({'case_id':case['case_id'],'error':f'{type(exc).__name__}: {exc}'})
             with lock:
                 progress.update(completed=len(results),failed=len(errors),updated_at=datetime.now(UTC).isoformat());write_json_atomic(status_path,progress)
-    if errors:
-        progress.update(status='failed',errors=errors,failed_at=datetime.now(UTC).isoformat());write_json_atomic(status_path,progress);raise RuntimeError(f'Held-out authoring failed for {len(errors)} cases')
+    terminal_by_id={path.stem:json.loads(path.read_text()) for path in sorted(terminal_dir.glob('*.json'))}
+    nonterminal=[error for error in errors if error['case_id'] not in terminal_by_id]
+    if nonterminal:
+        progress.update(status='failed_nonterminal',errors=errors,failed_at=datetime.now(UTC).isoformat())
+        write_json_atomic(status_path,progress)
+        raise RuntimeError(f'Held-out authoring encountered {len(nonterminal)} nonterminal errors')
+    if len(results)+len(terminal_by_id)!=len(cases) or not results:
+        raise RuntimeError('Held-out allocation census incomplete or has no assessable candidate')
+    terminal_ids=sorted(terminal_by_id)
     results.sort(key=lambda x:x['case']['case_id']);write_jsonl_atomic(output_dir/'benchmark_pre_review.jsonl',(x['case'] for x in results));write_jsonl_atomic(output_dir/'benchmark_reference_pre_review.jsonl',(x['reference'] for x in results));write_jsonl_atomic(output_dir/'review_packets.jsonl',(x['review_packet'] for x in results))
+    write_jsonl_atomic(output_dir/'review_packets_codex_gold.jsonl',(x['review_packet'] for x in results))
     counts={lane:sum(x['case']['candidate_type']==lane for x in results) for lane in ('single_source','multi_source','table','comparison')}
-    summary={'status':'awaiting_routed_independent_review','started_at':started,'completed_at':datetime.now(UTC).isoformat(),'case_count':len(results),'cases_by_type':counts,'heldout_document_coverage':len({d for x in results for d in x['case']['expected_document_ids']}),'heldout_selection_digest':heldout['selection_digest'],'allocation_digest':allocation_digest,'authoring_model':settings.get('v17_turbo_heldout_benchmark.authoring_model'),'reviewer_routing':{'single_source':settings.get('v17_turbo_heldout_benchmark.single_source_reviewer'),'multi_source':settings.get('v17_turbo_heldout_benchmark.multi_source_reviewer'),'table':settings.get('v17_turbo_heldout_benchmark.table_reviewer'),'comparison':settings.get('v17_turbo_heldout_benchmark.comparison_reviewer')}}
-    write_json_atomic(output_dir/'authoring_summary.json',summary);progress.update(status=summary['status'],completed=len(results),failed=0,completed_at=summary['completed_at']);write_json_atomic(status_path,progress);return summary
+    summary={'status':'awaiting_routed_independent_review','started_at':started,'completed_at':datetime.now(UTC).isoformat(),'planned_case_count':len(cases),'case_count':len(results),'terminal_authoring_failure_count':len(terminal_ids),'terminal_authoring_case_ids':terminal_ids,'canonical_full_count_satisfied':not terminal_ids,'cases_by_type':counts,'heldout_document_coverage':len({d for x in results for d in x['case']['expected_document_ids']}),'heldout_selection_digest':heldout['selection_digest'],'allocation_digest':allocation_digest,'authoring_model':settings.get('v17_turbo_heldout_benchmark.authoring_model'),'reviewer_routing':{'single_source':settings.get('v17_turbo_heldout_benchmark.single_source_reviewer'),'multi_source':settings.get('v17_turbo_heldout_benchmark.multi_source_reviewer'),'table':settings.get('v17_turbo_heldout_benchmark.table_reviewer'),'comparison':settings.get('v17_turbo_heldout_benchmark.comparison_reviewer')}}
+    write_json_atomic(output_dir/'authoring_summary.json',summary);progress.update(status=summary['status'],completed=len(results),failed=len(terminal_ids),terminal_authoring_case_ids=terminal_ids,errors=errors,completed_at=summary['completed_at']);write_json_atomic(status_path,progress);return summary
 
 
 def main()->None:

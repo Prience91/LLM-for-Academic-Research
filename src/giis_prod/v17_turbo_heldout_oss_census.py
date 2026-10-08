@@ -47,6 +47,9 @@ def run():
 
 def configure(run):
     run = run.resolve()
+    status = json.loads((run / "status.json").read_text())
+    if status.get("review_routing_revision") == "split_review_v2":
+        raise ValueError("Held-out candidates require gold review; OSS census is historical only")
     root = protocol.ROOT.resolve()
     allowed = (root / "artifacts/v17_turbo").resolve()
     if not run.is_relative_to(allowed):

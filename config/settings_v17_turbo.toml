@@ -90,8 +90,8 @@ underfilled_release_floor = 2
 # maximum request allowance on a persistently failing evidence bundle.
 maximum_zero_yield_requests_before_minimum = 2
 # Request, transport, and structured-output failures are infrastructure failures, not evidence
-# quality failures. Retry them separately and abort cleanly if the bounded retry budget is exhausted.
-maximum_transient_retries_per_request = 2
+# quality failures. Retry once; exhausted failures are terminal quarantine entries, never repair candidates.
+maximum_transient_retries_per_request = 1
 transient_retry_backoff_seconds = 1.0
 # Match the selected vLLM profile by overlapping exactly two independent teacher requests.
 # Candidate validation, checkpoint updates, and release ordering remain sequential and stable.
@@ -128,7 +128,7 @@ verification_reasoning_effort = "low"
 # breaker still fails closed if the verifier is broadly unhealthy rather than intermittently noisy.
 maximum_verification_attempts = 2
 maximum_consecutive_verification_quarantines = 3
-# Initial request plus at most two quality refills. Infrastructure retries are separate.
+# Initial request plus at most two quality refills. Each failed-closed request gets one infrastructure retry.
 maximum_core_requests_per_document = 3
 # Build teacher bundles from substantive sections only. Eight chunks provide enough breadth for
 # grounded synthesis while four is the minimum required to generate a paper's allocation.
@@ -239,7 +239,7 @@ gradient_checkpointing_use_reentrant = false
 # remain unchanged; serving must also disable thinking for comparable direct answers.
 enable_thinking = false
 hub_model_id = ""
-wandb_enabled = false
+wandb_enabled = true
 wandb_project = "giis-mini-run"
 wandb_run_name = "mini-run-v17-turbo-qwen3.8-27b-qlora-nf4"
 wandb_tags = "mini-run,v17-turbo,qwen3.8-27b,qlora-nf4,climate-change,direct-answer"
@@ -345,9 +345,12 @@ require_all_heldout_documents_covered = true
 allocation_basis = "proportional_to_v17_turbo_planned_candidate_mix"
 
 [v17_turbo_heldout_benchmark]
+review_routing_revision = "split_review_v2"
+maximum_authoring_fail_closed_retries = 1
+gold_review_requires_explicit_authorization = true
 authoring_model = "Qwen/Qwen3.5-122B-A10B-GPTQ-Int4"
 authoring_method = "qwen_122b_obligation_mapped_from_frozen_heldout_evidence"
-single_source_reviewer = "GPT-OSS-120B"
+single_source_reviewer = "Codex gold"
 multi_source_reviewer = "Codex gold"
 table_reviewer = "Codex gold"
 comparison_reviewer = "Codex gold"
@@ -405,13 +408,20 @@ counts_toward_core_or_multi_source_minimum = false
 semantic_regeneration_enabled = false
 
 [v17_turbo_review]
+routing_revision = "split_review_v2"
 review_cap = 400
 single_source_reviewer = "GPT-OSS-120B"
+multi_source_reviewer = "GPT-OSS-120B"
+table_reviewer = "GPT-OSS-120B"
+comparison_reviewer = "GPT-OSS-120B"
+all_lane_machine_review_fraction = 1.0
 single_source_machine_review_fraction = 1.0
-single_source_gold_review_fraction = 0.0
-multi_source_gold_review_fraction = 1.0
-structured_table_gold_review_fraction = 1.0
-structured_comparison_gold_review_fraction = 1.0
+gold_selection = "completed_oss_semantic_rejects"
+maximum_fail_closed_retries = 1
+exhausted_fail_closed_disposition = "terminal_quarantine_no_repair"
+gold_fail_closed_retries = 0
+gold_fail_closed_disposition_requires_authorization = true
+gold_review_requires_explicit_authorization = true
 machine_accept_disposition = "eligible_for_operator_release"
 machine_reject_disposition = "quarantine"
 machine_error_disposition = "quarantine"
@@ -421,4 +431,3 @@ materially_incomplete_disposition = "discard"
 unsupported_disposition = "discard"
 semantic_regeneration_enabled = false
 production_corpus_overprovision_fraction = 0.40
-
