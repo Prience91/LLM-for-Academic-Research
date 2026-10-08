@@ -15,5 +15,5 @@ for relative in binding["bindings"]:
         raise SystemExit("Missing or unsafe binding source: " + relative)
     binding["bindings"][relative] = hashlib.sha256(source.read_bytes()).hexdigest()
 binding["fingerprint"] = hashlib.sha256(json.dumps(binding["bindings"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-path.write_text(json.dumps(binding, indent=2, sort_keys=True) + "\n")
+path.write_text(json.dumps(binding, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
 print(binding["fingerprint"])
