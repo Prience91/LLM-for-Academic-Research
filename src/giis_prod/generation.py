@@ -105,7 +105,10 @@ def _coverage_prompt(
     ]
     for index, obligation in enumerate(obligations, 1):
         row = coverage_by_index.get(index, {})
-        status = "covered" if bool(row.get("covered", False)) else "not fully covered"
+        status = (
+            "validation_unavailable" if row.get("validation") != "semantic"
+            else "covered" if row.get("covered") is True else "not fully covered"
+        )
         ids = ", ".join(str(value) for value in row.get("evidence_ids", []))
         suffix = f"; mapped passages: {ids}" if ids else ""
         lines.append(f"{index}. [{status}{suffix}] {obligation}")
@@ -318,6 +321,36 @@ class GroundedGenerator:
 
         obligations = list(getattr(retrieval, "obligations", []))
         obligation_coverage = list(getattr(retrieval, "obligation_coverage", []))
+        semantic_review_available = (
+            len(obligation_coverage) == len(obligations)
+            and {row.get("obligation_index") for row in obligation_coverage}
+            == set(range(1, len(obligations) + 1))
+            and all(row.get("validation") == "semantic"
+                    and type(row.get("covered")) is bool
+                    and (not row["covered"] or bool(row.get("evidence_ids")))
+                    for row in obligation_coverage)
+        )
+        if obligations and not semantic_review_available:
+            reason = "semantic_validation_unavailable"
+            return AnswerResult(
+                answer=str(self.response.get(
+                    "semantic_validation_unavailable_message",
+                    "The retrieved evidence could not be semantically verified. "
+                    "No research answer was generated.",
+                )),
+                references_markdown=render_reference_panel(retrieval.evidence),
+                mode=ResponseMode.NO_EVIDENCE,
+                abstained=True,
+                evidence=retrieval.evidence,
+                rewritten_query=retrieval.rewritten_query,
+                abstention_reason=reason,
+                rejection_reason_codes=[reason],
+                obligations=obligations,
+                obligation_coverage=obligation_coverage,
+                coverage_complete=False,
+                retrieval_passes=int(getattr(retrieval, "retrieval_passes", 1)),
+                atomic_planning_succeeded=getattr(retrieval, "atomic_planning_succeeded", None),
+            )
         outputs = [
             self._generate(
                 query,

@@ -9,6 +9,7 @@ The repository contains reusable code and policy; corpus files, model weights, i
 - [V17-Turbo policy](V17_TURBO_POLICY.md), [protocol](V17_TURBO_PROTOCOL.md), and [routing/retry contract](V17_TURBO_UNIVERSAL_OSS_FIRST_AMENDMENT.md): training and validation use OSS across all lanes, then authorized gold review of confident semantic rejects. Every generated held-out reference receives direct gold review.
 - [Held-out handoff](V17_TURBO_HELDOUT_HANDOFF.md): main OSS census, held-out authoring, and joint gold-authorization pause.
 - [UI policy](UI_POLICY.md): obligation completion, evidence coverage and release-bound decoding.
+- [Semantic validation failure handling](SEMANTIC_VALIDATION_FAILURE_HANDLING.md): unavailable-review states, no retrieval-only approval, final-bundle validation and pre-generation abstention.
 - [Deployment and synchronization](DEPLOYMENT_AND_SYNC.md): portable configuration, execution fingerprints and launch commands.
 
 Exhausted authoring/OSS fail-closed errors are terminal quarantine without gold salvaging. Gold fail-closed outcomes have no retry and require operator authorization for archival or quarantine. No gold review, dataset release, training or index activation is authorized merely by synchronizing this repository.

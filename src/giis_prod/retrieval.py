@@ -18,6 +18,16 @@ def _fts_query(query: str) -> str:
     return " OR ".join(f'"{token.replace(chr(34), "")}"' for token in tokens[:32])
 
 
+def _unavailable_coverage(obligations: list[str]) -> list[dict[str, Any]]:
+    """A failed semantic review is not evidence that a requirement is supported."""
+    return [
+        {"obligation_index": index, "obligation": obligation, "covered": False,
+         "evidence_ids": [], "validation": "unavailable",
+         "status": "validation_unavailable"}
+        for index, obligation in enumerate(obligations, 1)
+    ]
+
+
 class QueryRewriter:
     def __init__(self, settings: Settings):
         from openai import OpenAI
@@ -173,8 +183,10 @@ class QueryRewriter:
     def validate_coverage(
         self, query: str, obligations: list[str], evidence: list[Evidence]
     ) -> list[dict[str, Any]]:
-        if not obligations or not evidence:
+        if not obligations:
             return []
+        if not evidence:
+            return _unavailable_coverage(obligations)
         evidence_text = "\n\n".join(
             f"[{item.evidence_id}] {item.text}" for item in evidence
         )
@@ -183,42 +195,40 @@ class QueryRewriter:
             "the passages contain enough explicit information to answer it without outside knowledge. "
             "Partial hints are not covered. Return only JSON in this form: "
             '{"coverage":[{"obligation_index":1,"covered":true,"evidence_ids":["E1"]}]}. '
-            "Include exactly one entry for every numbered requirement.\n\n"
+            "Include exactly one entry per numbered requirement, using JSON booleans and only supplied IDs.\n\n"
             f"Question: {query}\n\nRequirements:\n"
             + "\n".join(f"{index}. {item}" for index, item in enumerate(obligations, 1))
             + f"\n\nPassages:\n{evidence_text}"
         )
         try:
             payload = self._json_payload(self._complete(prompt, 640, timeout=120))
-            rows = payload.get("coverage", []) if isinstance(payload, dict) else []
-            parsed: list[dict[str, Any]] = []
+            rows = payload.get("coverage") if isinstance(payload, dict) else None
+            if not isinstance(rows, list) or len(rows) != len(obligations):
+                raise ValueError("Incomplete semantic coverage response")
             valid_ids = {item.evidence_id for item in evidence}
-            for expected_index, obligation in enumerate(obligations, 1):
-                row = next(
-                    (
-                        candidate
-                        for candidate in rows
-                        if int(candidate.get("obligation_index", 0)) == expected_index
-                    ),
-                    {},
-                )
-                ids = [
-                    str(value)
-                    for value in row.get("evidence_ids", [])
-                    if str(value) in valid_ids
-                ]
-                parsed.append(
-                    {
-                        "obligation_index": expected_index,
-                        "obligation": obligation,
-                        "covered": bool(row.get("covered", False)) and bool(ids),
-                        "evidence_ids": ids,
-                        "validation": "semantic",
-                    }
-                )
-            return parsed
+            indexed = {}
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise ValueError("Malformed coverage row")
+                index = row.get("obligation_index")
+                ids = row.get("evidence_ids")
+                if (type(index) is not int or index not in range(1, len(obligations) + 1)
+                        or index in indexed or type(row.get("covered")) is not bool
+                        or not isinstance(ids, list)
+                        or any(not isinstance(value, str) or value not in valid_ids for value in ids)
+                        or (row["covered"] and not ids)):
+                    raise ValueError("Invalid semantic decision or evidence IDs")
+                indexed[index] = row
+            return [
+                {"obligation_index": index, "obligation": obligation,
+                 "covered": indexed[index]["covered"],
+                 "evidence_ids": list(dict.fromkeys(indexed[index]["evidence_ids"])),
+                 "validation": "semantic",
+                 "status": "covered" if indexed[index]["covered"] else "uncovered"}
+                for index, obligation in enumerate(obligations, 1)
+            ]
         except Exception:
-            return []
+            return _unavailable_coverage(obligations)
 
 
 class HybridRetriever:
@@ -489,18 +499,8 @@ class HybridRetriever:
 
         # Reserve an evidence slot for every question-derived obligation before allowing
         # globally high-scoring or source-diverse passages to consume the context budget.
-        provisional: list[dict[str, Any]] = []
-        for obligation_index, ranked in enumerate(ranked_by_obligation, start=1):
-            chosen = next((item for item in ranked if try_add(item)), None)
-            provisional.append(
-                {
-                    "obligation_index": obligation_index,
-                    "obligation": obligations[obligation_index - 1],
-                    "covered": chosen is not None,
-                    "evidence_ids": [],
-                    "validation": "targeted_retrieval",
-                }
-            )
+        for ranked in ranked_by_obligation:
+            next((item for item in ranked if try_add(item)), None)
 
         preliminary_evidence = self._as_evidence(selected)
         coverage = (
@@ -509,18 +509,13 @@ class HybridRetriever:
             else []
         )
         if not coverage and obligations:
-            id_by_chunk = {item.chunk_id: item.evidence_id for item in preliminary_evidence}
-            for row, ranked in zip(provisional, ranked_by_obligation):
-                row["evidence_ids"] = [
-                    id_by_chunk[item["chunk_id"]]
-                    for item in ranked
-                    if item["chunk_id"] in id_by_chunk
-                ][:2]
-            coverage = provisional
+            coverage = _unavailable_coverage(obligations)
         retrieval_passes = 1 + (1 if obligations else 0)
 
         # Run the bounded rescue while context positions are still available, before global fill.
-        uncovered = [row for row in coverage if not row["covered"]]
+        # Retrieval rescue addresses evidence gaps, not an unavailable reviewer.
+        uncovered = [row for row in coverage
+                     if row.get("validation") == "semantic" and not row["covered"]]
         rescue_performed = False
         if uncovered and len(selected) < final_chunks:
             for row in uncovered:
@@ -563,14 +558,22 @@ class HybridRetriever:
             try_add(remaining.pop(0))
 
         evidence = self._as_evidence(selected)
-        if obligations and rescue_performed:
-            validated = self.rewriter.validate_coverage(rewritten, obligations, evidence)
-            if validated:
-                coverage = validated
+        if obligations and (
+            rescue_performed
+            or [item.chunk_id for item in evidence]
+            != [item.chunk_id for item in preliminary_evidence]
+        ):
+            coverage = (
+                self.rewriter.validate_coverage(rewritten, obligations, evidence)
+                or _unavailable_coverage(obligations)
+            )
 
         coverage_complete = (
             bool(coverage)
-            and all(row["covered"] for row in coverage)
+            and len(coverage) == len(obligations)
+            and all(row.get("validation") == "semantic"
+                    and row.get("covered") is True and bool(row.get("evidence_ids"))
+                    for row in coverage)
             and atomic_planning_succeeded is not False
         )
         return self._cache_put(query, history, RetrievalResult(

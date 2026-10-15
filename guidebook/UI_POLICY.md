@@ -275,3 +275,12 @@ The present implementation must complete these changes before this policy can be
 
 Until those controls pass, the current Gradio interface is a development implementation and not a
 canonical production UI release.
+
+
+## Semantic validation failure handling
+
+The configured local model performs evidence sufficiency review through a separate model call before answer generation. It is not an independent reviewer. Timeouts, malformed JSON, missing or duplicate obligation rows, non-boolean decisions, foreign evidence IDs and unsupported approval without a passage ID must produce `validation_unavailable` with `covered=false`. Candidate selection is never semantic approval.
+
+Retrieval-only fallback mappings cannot produce `coverage_complete=true`. If the final selected bundle changes, revalidate that bundle; a failed final review cannot retain an earlier successful completeness claim. Rescue searches target actual reviewed evidence gaps, not reviewer outages.
+
+The generator must abstain with `semantic_validation_unavailable` before composing a research answer when an obligation lacks a valid semantic decision. A valid semantic review that identifies uncovered obligations remains an evidence limitation, not a failed review, and may be handled with explicit limitations under the normal policy. No new retries, model roles, capacity settings or retrieval thresholds are introduced by this correction.
