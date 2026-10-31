@@ -8,6 +8,11 @@ Root: `/home/codeaccounting/Documents/Mini run`
 
 ## Governing files
 
+After student administration and prediction sealing, follow
+[Student held-out gold review](STUDENT_HELDOUT_GOLD_REVIEW.md) for direct Codex review of the
+entire response census. Objective diagnostics do not complete scientific evaluation; no
+machine-screening stage substitutes for gold correctness, entailment, and completeness judgments.
+
 The operative files are:
 
 - `V17_TURBO_POLICY.md` and this protocol;

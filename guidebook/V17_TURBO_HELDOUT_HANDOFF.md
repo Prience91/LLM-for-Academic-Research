@@ -1,5 +1,11 @@
 # V17-Turbo held-out handoff contract
 
+The authoring handoff below ends at benchmark freeze. A separate subsequent handoff applies
+after student predictions are sealed: [Student held-out gold review](STUDENT_HELDOUT_GOLD_REVIEW.md).
+Every student, base-control, and quantized-variant response goes directly to Codex gold review;
+there is no OSS-first student-results route. Benchmark-reference gold approval does not count
+as gold evaluation of later student answers.
+
 The canonical `heldout-pipeline` requires completion of the main training/validation all-lane OSS
 census and a hash-bound queue containing only completed OSS semantic rejects. It verifies source plan,
 census and queue hashes, routing revision, and terminal OSS failures before authoring. Main gold

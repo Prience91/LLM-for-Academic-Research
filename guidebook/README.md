@@ -4,6 +4,7 @@ The repository contains reusable code and policy; corpus files, model weights, i
 
 ## Canonical authority
 
+- [Student held-out results: direct Codex gold review](STUDENT_HELDOUT_GOLD_REVIEW.md): a separate post-generation scientific review of all sealed student/base/quantized responses; no OSS-first screening or self-judging route.
 - [Metadata ingestion](METADATA_INGESTION_POLICY.md): source-bound overrides, Crossref first, OpenAlex fallback, non-blocking quota backlogs, English Qwen vision adjudication, authorized gold referrals, and promotion before parsing.
 - [Parsing and hybrid indexing](PARSING_EMBEDDING_AND_HYBRID_INDEX_POLICY.md): extraction, chunk provenance, accepted-only Granite/Chroma and SQLite FTS5 construction, audits and index bindings.
 - [V17-Turbo policy](V17_TURBO_POLICY.md), [protocol](V17_TURBO_PROTOCOL.md), and [routing/retry contract](V17_TURBO_UNIVERSAL_OSS_FIRST_AMENDMENT.md): training and validation use OSS across all lanes, then authorized gold review of confident semantic rejects. Every generated held-out reference receives direct gold review.

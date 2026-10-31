@@ -11,6 +11,11 @@ Root: `/home/codeaccounting/Documents/Mini run`
 
 ## Authority and independence
 
+The post-administration extension [Student held-out gold review](STUDENT_HELDOUT_GOLD_REVIEW.md)
+governs scientific evaluation of sealed student-model responses. Every administered case goes
+directly to Codex gold, including base controls and quantized variants, without OSS screening.
+This is distinct from qualification of teacher-authored benchmark references before freeze.
+
 `V17_TURBO_POLICY.md`, `V17_TURBO_PROTOCOL.md`, `config/settings_v17_turbo.toml`, and the
 `v17_turbo_*` modules contain the complete operative architecture. Earlier policy documents are
 historical evidence only. They are not normative dependencies and may not supply a missing rule,

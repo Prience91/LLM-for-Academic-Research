@@ -55,6 +55,7 @@ flowchart LR
 4. **Fine-tuning and evaluation**
    - QLoRA/NF4 fine-tuning for the Qwen student with memory canaries and immutable releases.
    - Validation-loss checkpointing and frozen held-out evaluation.
+   - After predictions are sealed, every student/base/quantized held-out result receives direct Codex gold review of scientific correctness, cited-evidence entailment, completeness, and abstention; no OSS screening substitutes for this review.
    - Exact tokenizer alignment between materialization, training, and serving.
 
 5. **Research UI**
@@ -110,6 +111,7 @@ Copy `config/settings.example.toml` before a run and adapt corpus locations, mod
 
 ## Canonical policies
 
+- [Student held-out results: direct Codex gold review](guidebook/STUDENT_HELDOUT_GOLD_REVIEW.md)
 - [Parsing, metadata, embedding, and hybrid-index policy](guidebook/PARSING_EMBEDDING_AND_HYBRID_INDEX_POLICY.md)
 - [Full-corpus metadata adjudication and ingestion policy](guidebook/METADATA_INGESTION_POLICY.md)
 - [V17-Turbo policy](guidebook/V17_TURBO_POLICY.md)
