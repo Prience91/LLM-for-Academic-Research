@@ -1,7 +1,7 @@
 # LLM for Academic Research 
 LLM for Academic Research is an evidence-grounded research pipeline for scientific literature. The repository combines verified document ingestion, hybrid obligation-aware retrieval, V17-Turbo synthetic-data generation, QLoRA supervised fine-tuning, held-out evaluation, and a coverage-aware user interface.
 
-The repository contains framework code and policy documentation only. Papers, parsed corpora, vector databases, generated datasets, model weights, adapters, checkpoints, credentials, and run artifacts are intentionally excluded.
+The repository contains framework code, policy documentation, and selected results, including the [Qwen 27B and 4B SFT learning curves](results/qwen-sft-results.md). Papers, parsed corpora, vector databases, generated datasets, model weights, adapters, checkpoints, credentials, and raw run artifacts are intentionally excluded.
 
 ## Architecture
 
